@@ -1,9 +1,12 @@
 import { useNavigate } from 'react-router-dom';
+import { useUser } from '../context/UserContext';
+import { User, BookOpen } from 'lucide-react';
 
 const STEP_LABELS = ['Home', 'Path', 'Subject', 'Topics', 'Learning'];
 
 export default function Navbar({ currentStep = 0, session = null }) {
   const navigate = useNavigate();
+  const { user } = useUser();
 
   return (
     <nav className="navbar">
@@ -34,9 +37,9 @@ export default function Navbar({ currentStep = 0, session = null }) {
           </div>
         )}
 
-        {/* Session indicator (only shown during learning) */}
-        {session && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* Right Controls: Session indicator + Profile Button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {session && (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
               background: 'rgba(255,255,255,0.04)',
@@ -57,8 +60,35 @@ export default function Navbar({ currentStep = 0, session = null }) {
               <span style={{ color: 'var(--text-muted)' }}>·</span>
               <span style={{ color: 'var(--text-secondary)', fontFamily: 'Space Grotesk', fontWeight: 600 }}>{session.time}</span>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Student Profile & History Button */}
+          {user && (
+            <button
+              id="btn-nav-profile"
+              onClick={() => navigate('/profile')}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '5px 12px',
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid var(--border)',
+                fontSize: 12,
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                transition: 'var(--transition)'
+              }}
+              title="View User Profile & Learned History"
+            >
+              <span style={{ fontSize: 15 }}>{user.avatar || '🎓'}</span>
+              <span>{user.name}</span>
+            </button>
+          )}
+        </div>
       </div>
     </nav>
   );
