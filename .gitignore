@@ -39,3 +39,9 @@ ml_brain/exported_models/*.pth
 
 # ChromaDB local storage
 chroma_db/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+backend/cogflow.db

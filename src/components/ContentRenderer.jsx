@@ -24,11 +24,11 @@ export default function ContentRenderer({ tier, topic }) {
       {/* Tier + topic header bar */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        paddingBottom: 18, marginBottom: 24,
+        paddingBottom: 16, marginBottom: 22,
         borderBottom: '1px solid var(--border)',
-        flexWrap: 'wrap', gap: 8,
+        flexWrap: 'wrap', gap: 12,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{
             display: 'inline-block', width: 9, height: 9, borderRadius: '50%',
             background: meta.dot,
@@ -37,8 +37,11 @@ export default function ContentRenderer({ tier, topic }) {
           <span style={{ fontSize: 12, fontWeight: 700, color: meta.color, letterSpacing: '0.05em' }}>
             {meta.label.toUpperCase()}
           </span>
+          <span className="placeholder-tag" style={{ fontSize: 10, padding: '2px 8px' }}>
+            ⚙ RAG Adaptive Engine
+          </span>
         </div>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
+        <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 600 }}>
           📖 {topic}
         </span>
       </div>

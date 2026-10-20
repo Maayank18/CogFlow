@@ -21,3 +21,13 @@ pandas==2.2.2              # Used in dummy_data_gen.py
 # ── CORS (for frontend connection) ──
 # Already included with fastapi, but explicitly listed:
 python-multipart==0.0.9
+
+# ── Database (ORM & SQLite) ──
+sqlalchemy>=2.0.0
+
+# ── Facial Feature Extraction & Computer Vision ──
+mediapipe>=0.10.0
+opencv-python>=4.8.0
+
+# ── ML Utilities & Evaluation ──
+scikit-learn>=1.4.0

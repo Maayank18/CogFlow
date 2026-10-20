@@ -315,8 +315,27 @@ export default function SessionResults() {
             </div>
           )}
 
+          {/* Saved to Profile Badge */}
+          <div style={{ textAlign: 'center', marginBottom: 24 }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)',
+              color: '#6ee7b7', padding: '6px 16px', borderRadius: 99, fontSize: 13, fontWeight: 600
+            }}>
+              <span>💾</span> Session & topic mastery recorded in your Profile History
+            </span>
+          </div>
+
           {/* Action buttons */}
           <div className="animate-fadeInUp delay-400" style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              id="view-profile-btn"
+              className="btn btn-secondary btn-lg"
+              onClick={() => navigate('/profile')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+            >
+              <span>👤</span> View Profile & History
+            </button>
             <button
               id="study-again-btn"
               className="btn btn-primary btn-lg"

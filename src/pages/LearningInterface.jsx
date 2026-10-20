@@ -4,6 +4,9 @@ import Navbar from '../components/Navbar';
 import CognitiveLoadGauge from '../components/CognitiveLoadGauge';
 import SessionTimeline from '../components/SessionTimeline';
 import ContentRenderer from '../components/ContentRenderer';
+import WebcamMonitor from '../components/WebcamMonitor';
+import { saveSession } from '../services/api';
+import { useUser } from '../context/UserContext';
 
 // ─────────────────────────────────────────────────────────────
 // Tier ordering: 1 = Simplified, 3 = Standard, 5 = Expert
@@ -154,7 +157,7 @@ function useSignalMonitor(isActive, currentTier) {
     setTimeout(() => setDismissed(false), 60000);
   }, []);
 
-  return { signals, cogLoad, suggestion, dismissSuggestion };
+  return { signals, cogLoad, setCogLoad, suggestion, setSuggestion, dismissSuggestion };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -180,7 +183,7 @@ export default function LearningInterface() {
   const contentTopRef = useRef(null);
   const elapsedRef    = useRef(0);
 
-  const { signals, cogLoad, suggestion, dismissSuggestion } = useSignalMonitor(isActive, currentTier);
+  const { signals, cogLoad, setCogLoad, suggestion, setSuggestion, dismissSuggestion } = useSignalMonitor(isActive, currentTier);
 
   const currentTierMeta = TIER_META[currentTier];
   const currentTopic    = topicNames[currentTopicIndex] || 'Introduction';
@@ -239,6 +242,8 @@ export default function LearningInterface() {
     dismissSuggestion();
   };
 
+  const { user } = useUser();
+
   // ── Session start / end ──
   const startSession = () => { setSessionStarted(true); setIsActive(true); };
 
@@ -247,6 +252,19 @@ export default function LearningInterface() {
     const avgLoad = loadHistory.length > 0
       ? Math.round(loadHistory.reduce((a, b) => a + b.load, 0) / loadHistory.length)
       : cogLoad;
+
+    // Asynchronously record session and learned topic mastery to SQLite DB
+    saveSession({
+      user_id: user?.id || 'usr_default',
+      subject: subject || 'General Learning',
+      duration_seconds: elapsedRef.current,
+      avg_cognitive_load: avgLoad,
+      initial_tier: 'tier3',
+      final_tier: currentTier,
+      topics: topicNames,
+      adaptation_log: adaptationLog
+    }).catch(err => console.warn('Could not auto-save session:', err));
+
     navigate('/results', {
       state: {
         subject,
@@ -255,6 +273,7 @@ export default function LearningInterface() {
         adaptationLog,
         totalSeconds: elapsedRef.current,
         avgLoad,
+        finalTier: currentTier,
       },
     });
   };
@@ -299,8 +318,8 @@ export default function LearningInterface() {
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 14 }}>
             {suggestion === 'simpler'
-              ? 'This content seems challenging. Want a simplified version?'
-              : 'You seem comfortable here. Ready for a harder explanation?'
+              ? 'You seem stuck or finding this section challenging. Would you like to simplify the language into key bullet points?'
+              : 'You seem comfortable and breezing through this. Would you like to increase the depth and challenge?'
             }
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -308,22 +327,24 @@ export default function LearningInterface() {
               id="suggestion-accept-btn"
               onClick={acceptSuggestion}
               style={{
-                flex: 1, padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13,
-                background: suggestion === 'simpler' ? 'rgba(244,63,94,0.2)' : 'rgba(245,158,11,0.2)',
+                flex: 1, padding: '9px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 12,
+                background: suggestion === 'simpler' ? 'rgba(244,63,94,0.25)' : 'rgba(245,158,11,0.25)',
                 color: suggestion === 'simpler' ? '#fda4af' : '#fcd34d',
+                transition: 'var(--transition)'
               }}
             >
-              {suggestion === 'simpler' ? '⬇ Yes, Simplify' : '⬆ Yes, Make it Harder'}
+              {suggestion === 'simpler' ? '⬇ Simplify Content' : '⬆ Increase Challenge'}
             </button>
             <button
               id="suggestion-dismiss-btn"
               onClick={dismissSuggestion}
               style={{
-                padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)',
-                background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13,
+                padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)',
+                background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                transition: 'var(--transition)'
               }}
             >
-              Not now
+              Remain at Current Pace
             </button>
           </div>
         </div>
@@ -335,9 +356,9 @@ export default function LearningInterface() {
         style={{
           flex: 1,
           display: 'grid',
-          gridTemplateColumns: '1fr 300px',
-          gap: 20,
-          maxWidth: 1300,
+          gridTemplateColumns: 'minmax(0, 1fr) 340px',
+          gap: 24,
+          maxWidth: 1360,
           margin: '0 auto',
           width: '100%',
           padding: '24px 24px 40px',
@@ -360,9 +381,8 @@ export default function LearningInterface() {
           <div
             id="topic-tabs-row"
             style={{
-              display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 10, marginBottom: 16,
+              display: 'flex', gap: 8, overflowX: 'auto', padding: '4px 6px 12px 2px', marginBottom: 16,
               scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch',
-              maskImage: 'linear-gradient(to right, transparent 0, black 20px, black calc(100% - 20px), transparent 100%)',
             }}
           >
             {topicNames.map((topic, i) => (
@@ -371,11 +391,12 @@ export default function LearningInterface() {
                 id={`topic-tab-${i}`}
                 onClick={() => goToTopic(i)}
                 style={{
-                  all: 'unset', cursor: 'pointer', padding: '5px 12px',
-                  borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap',
-                  background: i === currentTopicIndex ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
-                  color: i === currentTopicIndex ? 'var(--indigo-light)' : 'var(--text-muted)',
-                  border: `1px solid ${i === currentTopicIndex ? 'rgba(99,102,241,0.4)' : 'var(--border)'}`,
+                  all: 'unset', cursor: 'pointer', padding: '6px 16px',
+                  borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+                  background: i === currentTopicIndex ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.04)',
+                  color: i === currentTopicIndex ? '#c7d2fe' : 'var(--text-muted)',
+                  border: `1px solid ${i === currentTopicIndex ? 'rgba(129,140,248,0.6)' : 'var(--border)'}`,
+                  boxShadow: i === currentTopicIndex ? '0 0 14px rgba(99,102,241,0.28)' : 'none',
                   transition: 'var(--transition)',
                 }}
               >
@@ -391,15 +412,10 @@ export default function LearningInterface() {
             overflow: 'hidden',
             position: 'relative',
           }}>
-            {/* Placeholder tag */}
-            <div style={{ position: 'absolute', top: 14, right: 14, zIndex: 10 }}>
-              <span className="placeholder-tag">⚙ PLACEHOLDER · RAG backend content</span>
-            </div>
-
             {/* Actual content — fades on tier change */}
             <div
               style={{
-                padding: '28px 32px 24px',
+                padding: '24px 28px 20px',
                 opacity: contentFading ? 0 : 1,
                 transition: 'opacity 0.28s ease',
                 minHeight: 360,
@@ -517,21 +533,31 @@ export default function LearningInterface() {
 
         {/* ─── RIGHT: Sidebar ─── */}
         <div style={{
-          display: 'flex', flexDirection: 'column', gap: 14,
+          display: 'flex', flexDirection: 'column', gap: 16,
           position: 'sticky', top: 84, alignSelf: 'start',
           maxHeight: 'calc(100vh - 100px)', overflowY: 'auto',
           scrollbarWidth: 'thin', scrollbarColor: 'rgba(99,102,241,0.3) transparent',
-          paddingRight: 2,
+          paddingRight: 4,
         }}>
 
           {/* Cognitive Load Gauge */}
-          <CognitiveLoadGauge
-            state={cogLoad < 35 ? 'bored' : cogLoad > 70 ? 'overload' : 'flow'}
-            load={cogLoad}
-          />
+          <div style={{ flexShrink: 0 }}>
+            <CognitiveLoadGauge
+              state={cogLoad < 35 ? 'bored' : cogLoad > 70 ? 'overload' : 'flow'}
+              load={cogLoad}
+            />
+          </div>
+
+          {/* Embedded Real-Time Webcam Facial Monitor */}
+          <div style={{ flexShrink: 0 }}>
+            <WebcamMonitor
+              onCognitiveLoadUpdate={setCogLoad}
+              onTriggerSuggestion={setSuggestion}
+            />
+          </div>
 
           {/* Signal monitors */}
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px' }}>
+          <div style={{ flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               Live Signals <span className="placeholder-tag">⚙ PLACEHOLDER</span>
             </div>
@@ -556,7 +582,7 @@ export default function LearningInterface() {
           </div>
 
           {/* Session stats */}
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px' }}>
+          <div style={{ flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 12 }}>
               Session Stats
             </div>
@@ -576,7 +602,9 @@ export default function LearningInterface() {
           </div>
 
           {/* Timeline */}
-          <SessionTimeline adaptationLog={adaptationLog} totalSeconds={elapsedSeconds} />
+          <div style={{ flexShrink: 0 }}>
+            <SessionTimeline adaptationLog={adaptationLog} totalSeconds={elapsedSeconds} />
+          </div>
 
           {/* End session */}
           <button
