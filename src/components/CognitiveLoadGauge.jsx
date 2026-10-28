@@ -1,134 +1,197 @@
-import { useEffect, useRef } from 'react';
+import { useMemo } from 'react';
+import { Activity, Sparkles, AlertTriangle, FastForward } from 'lucide-react';
 
 const STATE_CONFIG = {
   flow: {
-    label: 'In Flow ✨',
-    desc: 'Optimal learning zone',
+    label: 'Optimal Flow State',
+    sublabel: 'Focus & retention synchronized',
     color: '#10b981',
-    lightColor: '#6ee7b7',
-    bgColor: 'rgba(16,185,129,0.12)',
-    borderColor: 'rgba(16,185,129,0.25)',
-    fillClass: 'low',
+    accentColor: '#34d399',
+    glowColor: 'rgba(16, 185, 129, 0.25)',
+    bgBadge: 'rgba(16, 185, 129, 0.12)',
+    borderBadge: 'rgba(16, 185, 129, 0.28)',
+    icon: Sparkles
   },
   overload: {
-    label: 'Overloaded 🔴',
-    desc: 'Simplifying content…',
+    label: 'Cognitive Friction',
+    sublabel: 'Simplification recommended',
     color: '#f43f5e',
-    lightColor: '#fda4af',
-    bgColor: 'rgba(244,63,94,0.12)',
-    borderColor: 'rgba(244,63,94,0.25)',
-    fillClass: 'high',
+    accentColor: '#fb7185',
+    glowColor: 'rgba(244, 63, 94, 0.25)',
+    bgBadge: 'rgba(244, 63, 94, 0.12)',
+    borderBadge: 'rgba(244, 63, 94, 0.28)',
+    icon: AlertTriangle
   },
   bored: {
-    label: 'Understimulated 🟡',
-    desc: 'Increasing challenge…',
+    label: 'Attention Drift',
+    sublabel: 'Challenge tier recommended',
     color: '#f59e0b',
-    lightColor: '#fcd34d',
-    bgColor: 'rgba(245,158,11,0.12)',
-    borderColor: 'rgba(245,158,11,0.25)',
-    fillClass: 'medium',
+    accentColor: '#fbbf24',
+    glowColor: 'rgba(245, 158, 11, 0.25)',
+    bgBadge: 'rgba(245, 158, 11, 0.12)',
+    borderBadge: 'rgba(245, 158, 11, 0.28)',
+    icon: FastForward
   },
 };
 
-export default function CognitiveLoadGauge({ state, load }) {
+export default function CognitiveLoadGauge({ state = 'flow', load = 50 }) {
   const config = STATE_CONFIG[state] || STATE_CONFIG.flow;
-  const canvasRef = useRef(null);
+  const StateIcon = config.icon;
 
-  // Draw arc gauge
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const cx = canvas.width / 2;
-    const cy = canvas.height * 0.72;
-    const r = canvas.width * 0.38;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Track arc
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, Math.PI, 0);
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 14;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-
-    // Filled arc
-    const angle = Math.PI + (load / 100) * Math.PI;
-    const gradient = ctx.createLinearGradient(cx - r, cy, cx + r, cy);
-    gradient.addColorStop(0, '#10b981');
-    gradient.addColorStop(0.5, '#f59e0b');
-    gradient.addColorStop(1, '#f43f5e');
-
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, Math.PI, angle);
-    ctx.strokeStyle = gradient;
-    ctx.lineWidth = 14;
-    ctx.lineCap = 'round';
-    ctx.stroke();
-
-    // Needle
-    const needleAngle = Math.PI + (load / 100) * Math.PI;
-    const nx = cx + (r) * Math.cos(needleAngle);
-    const ny = cy + (r) * Math.sin(needleAngle);
-
-    ctx.beginPath();
-    ctx.arc(nx, ny, 6, 0, Math.PI * 2);
-    ctx.fillStyle = config.color;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(nx, ny, 3, 0, Math.PI * 2);
-    ctx.fillStyle = 'white';
-    ctx.fill();
-
-  }, [load, config.color]);
+  // Arc calculation (180 degree semi-circle)
+  const radius = 68;
+  const strokeWidth = 10;
+  const circumference = Math.PI * radius; // Half-circle
+  const strokeDashoffset = useMemo(() => {
+    const clampedLoad = Math.min(100, Math.max(0, load));
+    return circumference - (clampedLoad / 100) * circumference;
+  }, [load, circumference]);
 
   return (
     <div style={{
-      background: config.bgColor,
-      border: `1px solid ${config.borderColor}`,
+      background: 'var(--gradient-card)',
+      border: `1px solid ${config.borderBadge}`,
       borderRadius: 'var(--radius-xl)',
       padding: '20px',
-      transition: 'background 0.8s ease, border-color 0.8s ease',
+      position: 'relative',
+      overflow: 'hidden',
+      boxShadow: `0 8px 32px rgba(0,0,0,0.4), 0 0 30px ${config.glowColor}`,
+      transition: 'border-color 0.4s ease, box-shadow 0.4s ease',
     }}>
-      {/* Label */}
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>
-        Cognitive Load
+      {/* Header */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 12
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <Activity size={14} style={{ color: config.color }} />
+          <span style={{
+            fontSize: 11,
+            fontWeight: 800,
+            letterSpacing: '0.08em',
+            color: 'var(--text-muted)',
+            textTransform: 'uppercase'
+          }}>
+            Cognitive Index
+          </span>
+        </div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          padding: '2px 8px',
+          borderRadius: 'var(--radius-full)',
+          background: config.bgBadge,
+          border: `1px solid ${config.borderBadge}`,
+          fontSize: 11,
+          fontWeight: 700,
+          color: config.accentColor
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: config.color }} />
+          LIVE
+        </div>
       </div>
 
-      {/* Arc gauge */}
-      <div style={{ position: 'relative', textAlign: 'center' }}>
-        <canvas ref={canvasRef} width={180} height={110} style={{ width: '100%', maxWidth: 180 }} />
-        {/* Center value */}
-        <div style={{ position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}>
-          <div style={{ fontSize: 28, fontWeight: 900, fontFamily: 'Space Grotesk', color: config.color, lineHeight: 1 }}>
-            {load}%
+      {/* Modern SVG Arc Gauge */}
+      <div style={{ position: 'relative', width: '100%', height: 110, display: 'flex', justifyContent: 'center' }}>
+        <svg width="200" height="110" viewBox="0 0 200 110" style={{ overflow: 'visible' }}>
+          <defs>
+            <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#10b981" />
+              <stop offset="50%" stopColor="#f59e0b" />
+              <stop offset="100%" stopColor="#f43f5e" />
+            </linearGradient>
+            <filter id="gaugeGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+
+          {/* Background Track */}
+          <path
+            d="M 25 100 A 75 75 0 0 1 175 100"
+            fill="none"
+            stroke="rgba(255, 255, 255, 0.08)"
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+          />
+
+          {/* Active Filled Arc */}
+          <path
+            d="M 25 100 A 75 75 0 0 1 175 100"
+            fill="none"
+            stroke="url(#gaugeGradient)"
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            style={{
+              transition: 'stroke-dashoffset 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
+            }}
+            filter="url(#gaugeGlow)"
+          />
+        </svg>
+
+        {/* Center Readout */}
+        <div style={{
+          position: 'absolute',
+          bottom: 4,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          textAlign: 'center'
+        }}>
+          <div style={{
+            fontSize: 34,
+            fontWeight: 800,
+            fontFamily: "'Space Grotesk', sans-serif",
+            color: '#ffffff',
+            lineHeight: 1,
+            letterSpacing: '-0.03em'
+          }}>
+            {load}
+            <span style={{ fontSize: 16, color: 'var(--text-muted)', fontWeight: 500 }}>%</span>
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginTop: 2 }}>
+            Index Score
           </div>
         </div>
       </div>
 
-      {/* State label */}
+      {/* State Badge Card */}
       <div style={{
-        textAlign: 'center',
-        padding: '8px 12px',
-        background: 'rgba(255,255,255,0.04)',
+        marginTop: 14,
+        padding: '10px 14px',
         borderRadius: 'var(--radius-md)',
-        marginTop: 8,
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10
       }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: config.lightColor }}>{config.label}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{config.desc}</div>
-      </div>
-
-      {/* Linear bar */}
-      <div style={{ marginTop: 14 }}>
-        <div className="load-gauge-bar">
-          <div className={`load-gauge-fill ${config.fillClass}`} style={{ width: `${load}%` }} />
+        <div style={{
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          background: config.bgBadge,
+          border: `1px solid ${config.borderBadge}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: config.color,
+          flexShrink: 0
+        }}>
+          <StateIcon size={16} />
         </div>
-      </div>
-
-      {/* Placeholder note */}
-      <div style={{ marginTop: 10, textAlign: 'center' }}>
-        <span className="placeholder-tag">⚙ PLACEHOLDER · AI model output</span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: config.accentColor, lineHeight: 1.2 }}>
+            {config.label}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {config.sublabel}
+          </div>
+        </div>
       </div>
     </div>
   );

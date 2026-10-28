@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { UserProvider } from './context/UserContext';
+import NeuralBackground from './components/NeuralBackground';
 import LandingPage from './pages/LandingPage';
 import ChoosePath from './pages/ChoosePath';
 import SubjectSelection from './pages/SubjectSelection';
@@ -13,6 +14,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <UserProvider>
+        <NeuralBackground />
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/choose-path" element={<ChoosePath />} />

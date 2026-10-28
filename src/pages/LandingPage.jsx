@@ -1,295 +1,288 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navbar from '../components/Navbar';
+import SpotlightCard from '../components/SpotlightCard';
+import NeuralWaveform from '../components/NeuralWaveform';
+import BiometricPlayground from '../components/BiometricPlayground';
+import ArchitectureVisualizer from '../components/ArchitectureVisualizer';
+import { sounds } from '../utils/soundEffects';
+import {
+  Brain, ScanFace, Cpu, Layers, Zap, BarChart3, ArrowRight,
+  Sparkles, CheckCircle2, Sliders, ShieldCheck, Terminal,
+  Activity, ChevronRight, Eye, RefreshCw, Compass
+} from 'lucide-react';
 
-const features = [
+const FEATURES = [
   {
-    icon: '👁️',
-    title: 'Silent Observation',
-    desc: 'Tracks your mouse, scroll, and typing patterns — no webcam required in Phase 1.',
+    icon: ScanFace,
+    title: 'MediaPipe FACS Telemetry',
+    tag: 'Edge Vision',
+    desc: 'Extracts 52 facial blendshapes including AU4 brow furrow and AU7 squint directly in-memory at 60 FPS without retaining video frames.'
   },
   {
-    icon: '🧠',
-    title: 'Cognitive Classification',
-    desc: 'AI model detects if you\'re overloaded, in flow, or bored every 10 seconds.',
+    icon: Brain,
+    title: 'DAiSEE BiLSTM ONNX Engine',
+    tag: 'Temporal AI',
+    desc: 'Bidirectional sequence network trained on empirical student cognitive datasets, running lightweight sub-millisecond inference.'
   },
   {
-    icon: '📖',
-    title: 'Adaptive Content',
-    desc: 'Content difficulty shifts up or down automatically so you stay in the learning zone.',
+    icon: Sliders,
+    title: 'Dynamic Content Rewriting',
+    tag: 'Adaptive RAG',
+    desc: 'Closed-loop curriculum adaptation transforms instructional density between Simplified Intuition, Standard, and Expert Depth.'
   },
   {
-    icon: '📊',
-    title: 'Session Analytics',
-    desc: 'See a timeline of your mental state throughout the session after you\'re done.',
+    icon: Activity,
+    title: 'Silent Behavioral Fusion',
+    tag: 'Multimodal',
+    desc: 'Fuses micro-interaction metrics like scroll cadence, pointer turbulence, and typing pauses alongside facial telemetry.'
   },
-];
-
-const stats = [
-  { value: '3x', label: 'Better retention' },
-  { value: '40%', label: 'Less study time' },
-  { value: '5', label: 'Difficulty tiers' },
-  { value: '10s', label: 'Adaptation cycle' },
+  {
+    icon: BarChart3,
+    title: 'Flow Index & Analytics',
+    tag: 'Biometric Log',
+    desc: 'Comprehensive post-study analytics visualizing minutes spent in optimal flow vs cognitive friction across topics.'
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Zero-Knowledge Privacy',
+    tag: 'Client Isolated',
+    desc: 'Zero video stream upload or cloud camera storage. Facial landmark vectors are calculated in browser memory and cleared immediately.'
+  }
 ];
 
 export default function LandingPage() {
   const navigate = useNavigate();
 
+  const handleLaunch = () => {
+    sounds.playLevelUp();
+    navigate('/choose-path');
+  };
+
   return (
-    <div className="page">
-      {/* Background orbs */}
+    <div className="page" style={{ position: 'relative', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <div className="glow-orb glow-orb-1" />
       <div className="glow-orb glow-orb-2" />
 
       <Navbar currentStep={0} />
 
-      {/* HERO SECTION */}
+      {/* ── HERO SECTION ── */}
       <section style={{
-        paddingTop: '100px',
-        paddingBottom: '80px',
-        textAlign: 'center',
-        background: 'radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.12) 0%, transparent 65%)',
+        paddingTop: 84,
+        paddingBottom: 60,
         position: 'relative',
         zIndex: 1,
       }}>
-        <div className="container-narrow animate-fadeInUp">
-          {/* Pill badge */}
-          <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'center' }}>
-            <span className="badge badge-indigo" style={{ fontSize: '13px', padding: '6px 14px' }}>
-              <span style={{ fontSize: '8px' }}>🟢</span>
-              Phase 1 · Now Available
+        <div className="container" style={{ textAlign: 'center' }}>
+
+          {/* Top Status Pill */}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 24 }} className="animate-fadeInUp">
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 16px',
+              borderRadius: 'var(--radius-full)',
+              background: 'rgba(99,102,241,0.12)',
+              border: '1px solid rgba(129,140,248,0.3)',
+              fontSize: 11,
+              fontWeight: 800,
+              color: '#c7d2fe',
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase'
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 10px #34d399' }} />
+              DAiSEE BiLSTM · MediaPipe 478 Mesh Active
             </span>
           </div>
 
-          {/* Headline */}
+          {/* Main Headline */}
           <h1 style={{
-            fontSize: 'clamp(40px, 6vw, 72px)',
-            fontWeight: 900,
+            fontSize: 'clamp(38px, 6vw, 72px)',
+            fontWeight: 800,
             lineHeight: 1.08,
-            marginBottom: '24px',
-            letterSpacing: '-0.03em',
-          }}>
-            Learn Smarter.{' '}
-            <span style={{
-              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}>
-              Not Harder.
+            letterSpacing: '-0.04em',
+            maxWidth: 1020,
+            margin: '0 auto 24px',
+            color: '#ffffff'
+          }} className="animate-fadeInUp delay-100">
+            Real-time cognitive load detection for{' '}
+            <span className="shimmer-text">
+              effortless mastery.
             </span>
           </h1>
 
-          {/* Subtext */}
+          {/* Subtitle */}
           <p style={{
-            fontSize: '18px',
+            fontSize: 18,
             color: 'var(--text-secondary)',
-            lineHeight: 1.7,
-            marginBottom: '40px',
-            maxWidth: '560px',
-            margin: '0 auto 40px',
-          }}>
-            CogFlow watches how your brain is coping and{' '}
-            <strong style={{ color: 'var(--text-primary)' }}>automatically adjusts</strong>{' '}
-            content difficulty — so you always stay in the optimal learning zone.
+            lineHeight: 1.65,
+            maxWidth: 680,
+            margin: '0 auto 36px',
+          }} className="animate-fadeInUp delay-200">
+            CogFlow silently monitors your focus, brow tension, and reading rhythm — dynamically tuning instructional depth to keep you locked in optimal flow state.
           </p>
 
-          {/* CTA Buttons */}
-          <div style={{ display: 'flex', gap: '14px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          {/* Action CTAs */}
+          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 60 }} className="animate-fadeInUp delay-300">
             <button
-              className="btn btn-primary btn-lg animate-float"
-              onClick={() => navigate('/choose-path')}
-              id="hero-start-btn"
+              className="btn btn-primary btn-lg"
+              onClick={handleLaunch}
+              id="hero-start-learning-btn"
+              style={{ gap: 8 }}
             >
-              Start Learning Free
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M5 12h14M12 5l7 7-7 7"/>
-              </svg>
+              Launch Adaptive Workspace
+              <ArrowRight size={16} />
             </button>
             <button
               className="btn btn-secondary btn-lg"
               onClick={() => {
-                document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' });
+                sounds.playClick();
+                const el = document.getElementById('playground-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
               }}
-              id="hero-learn-more-btn"
+              style={{ gap: 8 }}
             >
-              How it Works
+              <Activity size={16} style={{ color: 'var(--indigo-light)' }} />
+              Test Neural Playground
             </button>
           </div>
-        </div>
 
-        {/* Floating demo card */}
-        <div className="container animate-fadeInUp delay-300" style={{ marginTop: '64px' }}>
-          <div style={{
-            maxWidth: '700px',
-            margin: '0 auto',
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border)',
-            borderRadius: '20px',
-            overflow: 'hidden',
-            boxShadow: '0 32px 80px rgba(0,0,0,0.5), var(--shadow-glow-lg)',
-          }}>
-            {/* Fake window bar */}
-            <div style={{
-              background: 'rgba(255,255,255,0.03)',
-              borderBottom: '1px solid var(--border)',
-              padding: '14px 20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}>
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ff5f57' }} />
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#febc2e' }} />
-              <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#28c840' }} />
-              <span style={{ flex: 1, textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>
-                CogFlow · Machine Learning Basics
-              </span>
-            </div>
-            {/* Demo content */}
-            <div style={{ padding: '24px', display: 'grid', gridTemplateColumns: '1fr 220px', gap: '20px' }}>
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 12 }}>
-                  Reading · Gradient Descent
-                </div>
-                <div style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
-                  <p style={{ marginBottom: 8 }}>Gradient descent is an optimization algorithm that iteratively moves towards the minimum of a function by taking steps proportional to the negative gradient.</p>
-                  <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>The learning rate η controls the size of each step. Too large → overshoot. Too small → slow convergence.</p>
-                </div>
-                <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
-                  <span className="tag selected">Simplify</span>
-                  <span className="tag">Normal</span>
-                  <span className="tag">Advanced</span>
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 10 }}>
-                  Cognitive Load
-                </div>
-                <div className="load-gauge-wrapper" style={{ padding: '16px' }}>
-                  <div className="load-gauge-bar">
-                    <div className="load-gauge-fill high" style={{ width: '78%' }} />
-                  </div>
-                  <div className="load-state-indicator load-state-overload" style={{ marginTop: 10 }}>
-                    <span style={{ fontSize: 8 }}>🔴</span> Overloaded
-                  </div>
-                  <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
-                    ↓ Switching to simpler tier…
-                  </div>
-                </div>
-                <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span>Mouse velocity</span><span style={{ color: 'var(--text-secondary)' }}>Low</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <span>Scroll rate</span><span style={{ color: 'var(--text-secondary)' }}>Slow</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Typing rhythm</span><span style={{ color: 'var(--text-secondary)' }}>Irregular</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+          {/* ── LIVE NEURAL OSCILLOSCOPE WAVEFORM ── */}
+          <div className="animate-fadeInUp delay-400" style={{ maxWidth: 1040, margin: '0 auto 64px' }}>
+            <NeuralWaveform defaultBand="alpha" />
           </div>
+
         </div>
       </section>
 
-      {/* STATS */}
-      <section style={{ padding: '48px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', position: 'relative', zIndex: 1 }}>
-        <div className="container">
-          <div className="grid-4">
-            {stats.map((s, i) => (
-              <div key={i} style={{ textAlign: 'center' }} className={`animate-fadeInUp delay-${(i+1)*100}`}>
-                <div style={{ fontSize: '36px', fontWeight: 900, fontFamily: 'Space Grotesk', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>{s.value}</div>
-                <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: 4 }}>{s.label}</div>
-              </div>
-            ))}
-          </div>
+      {/* ── BIOMETRIC TELEMETRY PLAYGROUND ── */}
+      <section id="playground-section" style={{
+        padding: '40px 0 80px',
+        position: 'relative',
+        zIndex: 1,
+      }}>
+        <div className="container" style={{ maxWidth: 1040 }}>
+          <BiometricPlayground />
         </div>
       </section>
 
-      {/* HOW IT WORKS */}
-      <section id="how-it-works" style={{ padding: '80px 0', position: 'relative', zIndex: 1 }}>
-        <div className="container">
-          <div style={{ textAlign: 'center', marginBottom: '56px' }}>
-            <span className="badge badge-indigo" style={{ marginBottom: 16 }}>How It Works</span>
-            <h2 style={{ fontSize: 'clamp(28px, 4vw, 42px)', fontWeight: 800, marginBottom: 16 }}>
-              The Invisible Co-Pilot for Learning
+      {/* ── SYSTEM ARCHITECTURE TOPOLOGY ── */}
+      <section style={{
+        padding: '40px 0 80px',
+        position: 'relative',
+        zIndex: 1,
+      }}>
+        <div className="container" style={{ maxWidth: 1040 }}>
+          <ArchitectureVisualizer />
+        </div>
+      </section>
+
+      {/* ── FEATURE MATRIX (SPOTLIGHT CARDS) ── */}
+      <section style={{
+        padding: '70px 0 90px',
+        borderTop: '1px solid var(--border)',
+        position: 'relative',
+        zIndex: 1
+      }}>
+        <div className="container" style={{ maxWidth: 1120 }}>
+          <div style={{ textAlign: 'center', marginBottom: 52 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--indigo-light)', textTransform: 'uppercase' }}>
+              Engine Architecture
+            </span>
+            <h2 style={{ fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 800, marginTop: 8, color: '#ffffff', letterSpacing: '-0.02em' }}>
+              Engineered for high-friction technical subjects.
             </h2>
-            <p style={{ color: 'var(--text-secondary)', maxWidth: 480, margin: '0 auto', fontSize: 16 }}>
-              No buttons to press. No ratings to give. Just read — CogFlow handles the rest.
+            <p style={{ fontSize: 15, color: 'var(--text-secondary)', marginTop: 8, maxWidth: 540, margin: '8px auto 0' }}>
+              Every component runs client-side with minimal memory footprints, zero video telemetry persistence, and calibrated inference thresholds.
             </p>
           </div>
 
-          <div className="grid-4">
-            {features.map((f, i) => (
-              <div key={i} className={`card animate-fadeInUp delay-${(i+1)*100}`}>
-                <div style={{ fontSize: 40, marginBottom: 16 }}>{f.icon}</div>
-                <h3 style={{ fontSize: 17, fontWeight: 700, marginBottom: 10 }}>{f.title}</h3>
-                <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{f.desc}</p>
-              </div>
-            ))}
+          <div className="grid-3" style={{ gap: 20 }}>
+            {FEATURES.map((feat, i) => {
+              const Icon = feat.icon;
+              return (
+                <SpotlightCard key={i} style={{ padding: '28px 24px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+                    <div style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 12,
+                      background: 'rgba(99,102,241,0.14)',
+                      border: '1px solid rgba(129,140,248,0.3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--indigo-light)',
+                    }}>
+                      <Icon size={22} />
+                    </div>
+                    <span style={{
+                      fontSize: 10, fontWeight: 800, padding: '3px 8px', borderRadius: 6,
+                      background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', border: '1px solid var(--border)'
+                    }}>
+                      {feat.tag}
+                    </span>
+                  </div>
+
+                  <h3 style={{ fontSize: 17, fontWeight: 800, marginBottom: 8, color: '#ffffff' }}>
+                    {feat.title}
+                  </h3>
+                  <p style={{ fontSize: 13.5, color: 'var(--text-secondary)', lineHeight: 1.65 }}>
+                    {feat.desc}
+                  </p>
+                </SpotlightCard>
+              );
+            })}
           </div>
         </div>
       </section>
 
-      {/* FLOW STEPS */}
-      <section style={{ padding: '60px 0', background: 'rgba(99,102,241,0.03)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', position: 'relative', zIndex: 1 }}>
-        <div className="container">
-          <h2 style={{ textAlign: 'center', fontSize: 28, fontWeight: 800, marginBottom: 48 }}>
-            Your Learning Journey
-          </h2>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: 0, overflowX: 'auto', paddingBottom: 8 }}>
-            {[
-              { num: '01', label: 'Pick a Subject', desc: 'Choose from preset subjects or upload your own syllabus PDF' },
-              { num: '02', label: 'Select Topics', desc: 'Pick the specific topics you want to study in this session' },
-              { num: '03', label: 'Read Naturally', desc: 'Content loads — just read at your own pace, no instructions needed' },
-              { num: '04', label: 'AI Adapts', desc: 'Every 10 seconds the AI re-evaluates and adjusts content tier' },
-              { num: '05', label: 'Session Review', desc: 'See your cognitive load timeline and which topics were hardest' },
-            ].map((step, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start' }}>
-                <div style={{ textAlign: 'center', maxWidth: 160 }}>
-                  <div style={{
-                    width: 48, height: 48, borderRadius: '50%',
-                    background: i === 0 ? 'var(--gradient-brand)' : 'var(--bg-card)',
-                    border: i === 0 ? 'none' : '1px solid var(--border)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, fontWeight: 800, color: i === 0 ? 'white' : 'var(--text-muted)',
-                    margin: '0 auto 12px',
-                    boxShadow: i === 0 ? '0 4px 20px rgba(99,102,241,0.4)' : 'none',
-                  }}>{step.num}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>{step.label}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{step.desc}</div>
-                </div>
-                {i < 4 && (
-                  <div style={{ width: 60, height: 1, background: 'var(--border)', marginTop: 24, flexShrink: 0 }} />
-                )}
-              </div>
-            ))}
+      {/* ── BOTTOM CTA BANNER ── */}
+      <section style={{
+        padding: '40px 0 100px',
+        position: 'relative',
+        zIndex: 1
+      }}>
+        <div className="container" style={{ maxWidth: 880 }}>
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(16, 21, 36, 0.9) 0%, rgba(22, 30, 51, 0.7) 100%)',
+            border: '1px solid rgba(129,140,248,0.35)',
+            borderRadius: 'var(--radius-2xl)',
+            padding: '52px 40px',
+            textAlign: 'center',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 50px rgba(99,102,241,0.18)',
+            position: 'relative',
+            overflow: 'hidden'
+          }}>
+            {/* Ambient background bloom */}
+            <div style={{
+              position: 'absolute', top: -50, right: -50, width: 220, height: 220,
+              borderRadius: '50%', background: 'rgba(99,102,241,0.15)', filter: 'blur(60px)', pointerEvents: 'none'
+            }} />
+
+            <span style={{ fontSize: 11, fontWeight: 800, color: 'var(--indigo-light)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, display: 'inline-block' }}>
+              Instant Closed-Loop Session
+            </span>
+            <h2 style={{ fontSize: 'clamp(26px, 3.5vw, 40px)', fontWeight: 800, marginBottom: 12, color: '#ffffff', letterSpacing: '-0.02em' }}>
+              Ready to learn at your cognitive ceiling?
+            </h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 15, maxWidth: 520, margin: '0 auto 28px', lineHeight: 1.6 }}>
+              Choose a curated technical curriculum or upload your own course materials to begin your biometric study session.
+            </p>
+
+            <button
+              className="btn btn-primary btn-lg"
+              onClick={handleLaunch}
+              style={{ gap: 8, margin: '0 auto' }}
+            >
+              Get Started Now
+              <ArrowRight size={16} />
+            </button>
           </div>
         </div>
       </section>
 
-      {/* CTA FOOTER */}
-      <section style={{ padding: '80px 24px', textAlign: 'center', position: 'relative', zIndex: 1 }}>
-        <h2 style={{ fontSize: 36, fontWeight: 800, marginBottom: 16 }}>Ready to learn smarter?</h2>
-        <p style={{ color: 'var(--text-secondary)', marginBottom: 32, fontSize: 16 }}>
-          No sign-up needed for Phase 1. Just pick a topic and start.
-        </p>
-        <button
-          className="btn btn-primary btn-lg"
-          onClick={() => navigate('/choose-path')}
-          id="footer-start-btn"
-        >
-          Get Started Now
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14M12 5l7 7-7 7"/>
-          </svg>
-        </button>
-      </section>
-
-      {/* Footer */}
-      <footer style={{ borderTop: '1px solid var(--border)', padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, position: 'relative', zIndex: 1 }}>
-        CogFlow · B.Tech Minor Project · Phase 1
-      </footer>
     </div>
   );
 }

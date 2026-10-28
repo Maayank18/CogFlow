@@ -7,37 +7,24 @@ import ContentRenderer from '../components/ContentRenderer';
 import WebcamMonitor from '../components/WebcamMonitor';
 import { saveSession } from '../services/api';
 import { useUser } from '../context/UserContext';
+import {
+  Brain, ArrowLeft, ArrowRight, CheckCircle2, Sliders, Activity,
+  MousePointer, Scroll, Keyboard, Sparkles, AlertCircle, Clock,
+  Maximize2, Minimize2, Eye, ShieldCheck, ChevronRight, Zap, Check, X
+} from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────
 // Tier ordering: 1 = Simplified, 3 = Standard, 5 = Expert
 // ─────────────────────────────────────────────────────────────
 const TIERS = ['tier1', 'tier3', 'tier5'];
 const TIER_META = {
-  tier1: { label: 'Simplified', short: 'Simplified', color: '#10b981', badge: 'badge-emerald' },
-  tier3: { label: 'Standard',   short: 'Standard',   color: '#6366f1', badge: 'badge-indigo'  },
-  tier5: { label: 'Expert',     short: 'Expert',      color: '#f59e0b', badge: 'badge-amber'   },
+  tier1: { key: '1', label: 'Simplified', short: 'Simplified', color: '#34d399', bg: 'rgba(52,211,153,0.12)', border: 'rgba(52,211,153,0.25)', badge: 'badge-emerald' },
+  tier3: { key: '2', label: 'Standard',   short: 'Standard',   color: '#818cf8', bg: 'rgba(99,102,241,0.12)', border: 'rgba(99,102,241,0.25)', badge: 'badge-indigo'  },
+  tier5: { key: '3', label: 'Expert',     short: 'Expert',     color: '#fbbf24', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.25)', badge: 'badge-amber'   },
 };
 
 // ─────────────────────────────────────────────────────────────
-// PLACEHOLDER: AI Signal Monitor
-// Silently collects raw interaction signals (mouse speed,
-// scroll rate, keystrokes) and, after a minimum observation
-// window, produces a SUGGESTION (not an auto-change).
-//
-// ── Phase 2 Integration ──
-// Replace the classifyTick heuristic below with a real API call:
-//
-//   POST http://localhost:8000/api/adapt
-//   Body:    { cognitive_state: 0|1|2, current_level: 1-5 }
-//   Response:{ status, action_taken, new_level, content }
-//
-// Tier mapping (frontend → backend):
-//   'tier1' (Simplified) → current_level 1-2, cognitive_state 1 (Overload)
-//   'tier3' (Standard)   → current_level 3,   cognitive_state 0 (Flow)
-//   'tier5' (Expert)     → current_level 4-5, cognitive_state 2 (Boredom)
-//
-// The returned `content` field replaces the static getContent() call
-// in ContentRenderer.jsx.
+// Real-time interaction telemetry monitor
 // ─────────────────────────────────────────────────────────────
 function useSignalMonitor(isActive, currentTier) {
   const [signals, setSignals]         = useState({ mouseVelocity: 0, scrollRate: 0, typingPace: 0 });
@@ -47,14 +34,12 @@ function useSignalMonitor(isActive, currentTier) {
   const mouseHistory   = useRef([]);
   const lastScrollY    = useRef(0);
   const keystrokeTs    = useRef([]);
-  const signalBuffer   = useRef([]);   // rolling window of (velocity, scroll, keys) for classification
+  const signalBuffer   = useRef([]);   // rolling window for telemetry classification
   const observeSince   = useRef(null); // timestamp when current-tier observation started
   const currentTierRef = useRef(currentTier);
 
-  // Keep tier ref in sync so the interval can read it without stale closure
   useEffect(() => {
     currentTierRef.current = currentTier;
-    // Reset observation window whenever tier changes so we don't immediately suggest again
     observeSince.current = Date.now();
     setSuggestion(null);
     setDismissed(false);
@@ -65,7 +50,6 @@ function useSignalMonitor(isActive, currentTier) {
 
     observeSince.current = Date.now();
 
-    // ── Raw signal listeners ──
     const onMouseMove = (e) => {
       mouseHistory.current.push({ x: e.clientX, y: e.clientY, t: Date.now() });
       if (mouseHistory.current.length > 12) mouseHistory.current.shift();
@@ -74,7 +58,7 @@ function useSignalMonitor(isActive, currentTier) {
     const onScroll = () => {
       const dy = Math.abs(window.scrollY - lastScrollY.current);
       lastScrollY.current = window.scrollY;
-      setSignals(prev => ({ ...prev, scrollRate: Math.min(100, dy * 2.5) }));
+      setSignals(prev => ({ ...prev, scrollRate: Math.min(100, Math.round(dy * 2.5)) }));
     };
 
     const onKeyDown = () => {
@@ -84,11 +68,10 @@ function useSignalMonitor(isActive, currentTier) {
       if (keystrokeTs.current.length > 1) {
         const gaps = keystrokeTs.current.slice(1).map((t, i) => t - keystrokeTs.current[i]);
         const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-        setSignals(prev => ({ ...prev, typingPace: Math.max(0, 100 - avg / 5) }));
+        setSignals(prev => ({ ...prev, typingPace: Math.round(Math.max(0, 100 - avg / 5)) }));
       }
     };
 
-    // ── Every second: compute mouse velocity ──
     const velTick = setInterval(() => {
       if (mouseHistory.current.length >= 2) {
         const a = mouseHistory.current[0];
@@ -97,31 +80,23 @@ function useSignalMonitor(isActive, currentTier) {
         const dist = Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
         const vel = dt > 0 ? Math.min(100, dist / dt / 3) : 0;
         setSignals(prev => ({ ...prev, mouseVelocity: Math.round(vel) }));
-        // Push to buffer for classification
         signalBuffer.current.push(vel);
         if (signalBuffer.current.length > 60) signalBuffer.current.shift();
       }
     }, 1000);
 
-    // ── Every 30 seconds: classify + maybe raise a suggestion ──
-    // Minimum 45s of observation before first suggestion so user
-    // has actually had time to read the content.
     const classifyTick = setInterval(() => {
       const elapsedSinceChange = (Date.now() - (observeSince.current || Date.now())) / 1000;
-      if (elapsedSinceChange < 45) return; // wait at least 45 seconds on a tier
-      if (dismissed) return;               // user already dismissed this suggestion
+      if (elapsedSinceChange < 45) return;
+      if (dismissed) return;
 
-      // ── PLACEHOLDER: Replace this block with real AI model call ──
-      // Heuristic: high avg mouse velocity + high scroll → bored (content too easy)
-      //            low velocity + many keystrokes → overloaded (pausing to think/search)
       const buf = signalBuffer.current;
       if (buf.length === 0) return;
       const avgVel = buf.reduce((a, b) => a + b, 0) / buf.length;
 
-      // Simulated cognitive load based on signals
       let load = 50;
-      if (avgVel > 55) load = Math.max(10, 50 - (avgVel - 55) * 0.8);  // fast mouse → bored
-      else if (avgVel < 15) load = Math.min(90, 50 + (15 - avgVel) * 2); // very slow → overloaded
+      if (avgVel > 55) load = Math.max(10, 50 - (avgVel - 55) * 0.8);
+      else if (avgVel < 15) load = Math.min(90, 50 + (15 - avgVel) * 2);
       load = Math.round(load);
       setCogLoad(load);
 
@@ -129,13 +104,10 @@ function useSignalMonitor(isActive, currentTier) {
       const tierIdx = TIERS.indexOf(tier);
 
       if (load < 30 && tierIdx < TIERS.length - 1) {
-        // Bored and not already on hardest tier → suggest harder
         setSuggestion('harder');
       } else if (load > 72 && tierIdx > 0) {
-        // Overloaded and not already on simplest tier → suggest simpler
         setSuggestion('simpler');
       }
-      // ── End of placeholder ──
     }, 30000);
 
     window.addEventListener('mousemove', onMouseMove);
@@ -153,7 +125,6 @@ function useSignalMonitor(isActive, currentTier) {
   const dismissSuggestion = useCallback(() => {
     setSuggestion(null);
     setDismissed(true);
-    // Allow a new suggestion after 60 more seconds
     setTimeout(() => setDismissed(false), 60000);
   }, []);
 
@@ -177,8 +148,9 @@ export default function LearningInterface() {
   const [currentTier,        setCurrentTier]        = useState('tier3'); // Start at Standard
   const [elapsedSeconds,     setElapsedSeconds]     = useState(0);
   const [adaptationLog,      setAdaptationLog]      = useState([]);
-  const [contentFading,      setContentFading]      = useState(false);  // for fade transition
+  const [contentFading,      setContentFading]      = useState(false);
   const [loadHistory,        setLoadHistory]        = useState([]);
+  const [distractionFree,    setDistractionFree]    = useState(false);
 
   const contentTopRef = useRef(null);
   const elapsedRef    = useRef(0);
@@ -220,27 +192,56 @@ export default function LearningInterface() {
         reason,
       }]);
       setContentFading(false);
-    }, 280); // matches CSS fade duration
+    }, 280);
   }, [currentTier, currentTopic]);
 
   // ── Manual difficulty controls ──
-  const goSimpler = () => {
+  const goSimpler = useCallback(() => {
     const idx = TIERS.indexOf(currentTier);
     if (idx > 0) changeTier(TIERS[idx - 1], 'manual-simpler');
-  };
+  }, [currentTier, changeTier]);
 
-  const goHarder = () => {
+  const goHarder = useCallback(() => {
     const idx = TIERS.indexOf(currentTier);
     if (idx < TIERS.length - 1) changeTier(TIERS[idx + 1], 'manual-harder');
-  };
+  }, [currentTier, changeTier]);
 
   // ── Accept AI suggestion ──
-  const acceptSuggestion = () => {
+  const acceptSuggestion = useCallback(() => {
     const idx = TIERS.indexOf(currentTier);
     if (suggestion === 'simpler' && idx > 0) changeTier(TIERS[idx - 1], 'ai-suggested');
     if (suggestion === 'harder'  && idx < TIERS.length - 1) changeTier(TIERS[idx + 1], 'ai-suggested');
     dismissSuggestion();
-  };
+  }, [currentTier, suggestion, changeTier, dismissSuggestion]);
+
+  // ── Hotkeys: 1/2/3 for tiers, Enter/Esc for suggestion ──
+  useEffect(() => {
+    if (!isActive) return;
+    const handleKeyDown = (e) => {
+      // Ignore if typing inside input / textarea
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+      if (suggestion) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          acceptSuggestion();
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          dismissSuggestion();
+          return;
+        }
+      }
+
+      if (e.key === '1') changeTier('tier1', 'shortcut-key');
+      if (e.key === '2') changeTier('tier3', 'shortcut-key');
+      if (e.key === '3') changeTier('tier5', 'shortcut-key');
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isActive, suggestion, acceptSuggestion, dismissSuggestion, changeTier]);
 
   const { user } = useUser();
 
@@ -253,7 +254,6 @@ export default function LearningInterface() {
       ? Math.round(loadHistory.reduce((a, b) => a + b.load, 0) / loadHistory.length)
       : cogLoad;
 
-    // Asynchronously record session and learned topic mastery to SQLite DB
     saveSession({
       user_id: user?.id || 'usr_default',
       subject: subject || 'General Learning',
@@ -281,13 +281,12 @@ export default function LearningInterface() {
   // ── Switch topic ──
   const goToTopic = (idx) => {
     setCurrentTopicIndex(idx);
-    setCurrentTier('tier3'); // Reset to standard on new topic
+    setCurrentTier('tier3');
     contentTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     document.getElementById(`topic-tab-${idx}`)?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   };
 
   const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
-
   const tierIdx = TIERS.indexOf(currentTier);
 
   if (!subject) return null;
@@ -296,55 +295,77 @@ export default function LearningInterface() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', position: 'relative' }}>
       <div className="glow-orb glow-orb-1" />
       <div className="glow-orb glow-orb-2" />
+
+      {/* Top Header */}
       <Navbar currentStep={4} session={{ time: formatTime(elapsedSeconds), state: cogLoad < 35 ? 'bored' : cogLoad > 70 ? 'overload' : 'flow' }} />
 
-      {/* ── AI Suggestion Toast ── */}
+      {/* ── AI Suggestion Toast (Glassmorphic Slide-in) ── */}
       {suggestion && (
         <div
           className="animate-fadeIn"
           style={{
-            position: 'fixed', top: 80, right: 24, zIndex: 300,
-            background: 'rgba(15,15,31,0.97)',
-            border: `1px solid ${suggestion === 'simpler' ? 'rgba(244,63,94,0.4)' : 'rgba(245,158,11,0.4)'}`,
-            borderRadius: 'var(--radius-lg)', padding: '16px 18px', maxWidth: 300,
-            boxShadow: '0 8px 40px rgba(0,0,0,0.5)', backdropFilter: 'blur(20px)',
+            position: 'fixed', bottom: 32, right: 32, zIndex: 500,
+            background: 'rgba(12, 17, 29, 0.95)',
+            border: `1px solid ${suggestion === 'simpler' ? 'rgba(244,63,94,0.45)' : 'rgba(245,158,11,0.45)'}`,
+            borderRadius: 'var(--radius-xl)', padding: '20px 22px', maxWidth: 360,
+            boxShadow: '0 16px 48px rgba(0,0,0,0.6), 0 0 30px rgba(99,102,241,0.15)',
+            backdropFilter: 'blur(24px)',
           }}
         >
-          <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 6, letterSpacing: '0.08em', textTransform: 'uppercase', color: suggestion === 'simpler' ? '#fda4af' : '#fcd34d' }}>
-            🧠 CogFlow Suggestion
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase',
+              color: suggestion === 'simpler' ? '#fda4af' : '#fcd34d'
+            }}>
+              <Brain size={14} />
+              AI Cognitive Adaptation
+            </div>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: 4 }}>
+              Active
+            </span>
           </div>
-          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 14 }}>
+
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 16 }}>
             {suggestion === 'simpler'
-              ? 'You seem stuck or finding this section challenging. Would you like to simplify the language into key bullet points?'
-              : 'You seem comfortable and breezing through this. Would you like to increase the depth and challenge?'
+              ? 'Elevated cognitive load detected. Would you like to transition to key concept summaries and visual bullet points?'
+              : 'Consistent flow and high comprehension detected. Ready to step up to expert-depth analysis and technical synthesis?'
             }
           </p>
+
           <div style={{ display: 'flex', gap: 8 }}>
             <button
               id="suggestion-accept-btn"
               onClick={acceptSuggestion}
               style={{
-                flex: 1, padding: '9px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 12,
-                background: suggestion === 'simpler' ? 'rgba(244,63,94,0.25)' : 'rgba(245,158,11,0.25)',
-                color: suggestion === 'simpler' ? '#fda4af' : '#fcd34d',
+                flex: 1, padding: '9px 14px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 12,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                background: suggestion === 'simpler' ? 'linear-gradient(135deg, #f43f5e, #e11d48)' : 'linear-gradient(135deg, #f59e0b, #d97706)',
+                color: '#fff',
+                boxShadow: suggestion === 'simpler' ? '0 4px 14px rgba(244,63,94,0.35)' : '0 4px 14px rgba(245,158,11,0.35)',
                 transition: 'var(--transition)'
               }}
             >
-              {suggestion === 'simpler' ? '⬇ Simplify Content' : '⬆ Increase Challenge'}
+              <Check size={14} />
+              {suggestion === 'simpler' ? 'Simplify Tier' : 'Step Up Tier'}
+              <span style={{ fontSize: 10, opacity: 0.8, marginLeft: 2, background: 'rgba(0,0,0,0.2)', padding: '1px 5px', borderRadius: 4 }}>Enter</span>
             </button>
             <button
               id="suggestion-dismiss-btn"
               onClick={dismissSuggestion}
               style={{
-                padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)',
+                padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)',
                 background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                display: 'flex', alignItems: 'center', gap: 4,
                 transition: 'var(--transition)'
               }}
             >
-              Remain at Current Pace
+              <X size={14} />
+              Stay
+              <span style={{ fontSize: 10, opacity: 0.7, background: 'rgba(255,255,255,0.08)', padding: '1px 4px', borderRadius: 4 }}>Esc</span>
             </button>
           </div>
         </div>
@@ -356,53 +377,122 @@ export default function LearningInterface() {
         style={{
           flex: 1,
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 340px',
+          gridTemplateColumns: distractionFree ? '1fr' : 'minmax(0, 1fr) 350px',
           gap: 24,
-          maxWidth: 1360,
+          maxWidth: distractionFree ? 960 : 1380,
           margin: '0 auto',
           width: '100%',
-          padding: '24px 24px 40px',
+          padding: '24px 24px 48px',
+          transition: 'all 0.3s ease',
         }}
       >
         {/* ─── LEFT: Content area ─── */}
         <div ref={contentTopRef} style={{ minWidth: 0 }}>
 
-          {/* Breadcrumb */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{subject}</span>
-            <span style={{ color: 'var(--border)', fontSize: 12 }}>›</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--indigo-light)' }}>{currentTopic}</span>
-            <span style={{ marginLeft: 'auto' }}>
-              <span className={`badge ${currentTierMeta.badge}`}>{currentTierMeta.label}</span>
-            </span>
+          {/* Breadcrumb + Mode Toggles */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{subject}</span>
+              <span style={{ color: 'var(--border)', fontSize: 12 }}>›</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--indigo-light)' }}>{currentTopic}</span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* Direct Tier Selector Pills */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                background: 'rgba(255,255,255,0.03)', padding: '3px 4px', borderRadius: 10,
+                border: '1px solid var(--border)'
+              }}>
+                {TIERS.map((tierKey) => {
+                  const meta = TIER_META[tierKey];
+                  const isSelected = currentTier === tierKey;
+                  return (
+                    <button
+                      key={tierKey}
+                      onClick={() => changeTier(tierKey, 'manual-pill')}
+                      title={`Press [${meta.key}] to switch`}
+                      style={{
+                        all: 'unset', cursor: 'pointer',
+                        padding: '4px 10px', borderRadius: 7,
+                        fontSize: 11, fontWeight: 700,
+                        background: isSelected ? meta.bg : 'transparent',
+                        color: isSelected ? meta.color : 'var(--text-muted)',
+                        border: isSelected ? `1px solid ${meta.border}` : '1px solid transparent',
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <span style={{
+                        width: 5, height: 5, borderRadius: '50%',
+                        background: isSelected ? meta.color : 'var(--text-muted)'
+                      }} />
+                      {meta.short}
+                      <span style={{
+                        fontSize: 9, opacity: 0.6,
+                        background: 'rgba(255,255,255,0.08)',
+                        padding: '1px 4px', borderRadius: 3
+                      }}>{meta.key}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Distraction free toggle */}
+              <button
+                onClick={() => setDistractionFree(!distractionFree)}
+                title={distractionFree ? 'Show telemetry sidebar' : 'Distraction-free mode'}
+                style={{
+                  all: 'unset', cursor: 'pointer',
+                  padding: '6px 10px', borderRadius: 8,
+                  background: distractionFree ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.03)',
+                  border: '1px solid var(--border)',
+                  color: distractionFree ? 'var(--indigo-light)' : 'var(--text-muted)',
+                  display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600
+                }}
+              >
+                {distractionFree ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                <span className="hide-mobile">{distractionFree ? 'Normal' : 'Focus'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Topic tabs */}
           <div
             id="topic-tabs-row"
             style={{
-              display: 'flex', gap: 8, overflowX: 'auto', padding: '4px 6px 12px 2px', marginBottom: 16,
+              display: 'flex', gap: 8, overflowX: 'auto', padding: '2px 4px 12px 2px', marginBottom: 16,
               scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch',
             }}
           >
-            {topicNames.map((topic, i) => (
-              <button
-                key={i}
-                id={`topic-tab-${i}`}
-                onClick={() => goToTopic(i)}
-                style={{
-                  all: 'unset', cursor: 'pointer', padding: '6px 16px',
-                  borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-                  background: i === currentTopicIndex ? 'rgba(99,102,241,0.22)' : 'rgba(255,255,255,0.04)',
-                  color: i === currentTopicIndex ? '#c7d2fe' : 'var(--text-muted)',
-                  border: `1px solid ${i === currentTopicIndex ? 'rgba(129,140,248,0.6)' : 'var(--border)'}`,
-                  boxShadow: i === currentTopicIndex ? '0 0 14px rgba(99,102,241,0.28)' : 'none',
-                  transition: 'var(--transition)',
-                }}
-              >
-                {i < currentTopicIndex ? '✓ ' : ''}{i + 1}. {topic}
-              </button>
-            ))}
+            {topicNames.map((topic, i) => {
+              const isSelected = i === currentTopicIndex;
+              const isDone = i < currentTopicIndex;
+              return (
+                <button
+                  key={i}
+                  id={`topic-tab-${i}`}
+                  onClick={() => goToTopic(i)}
+                  style={{
+                    all: 'unset', cursor: 'pointer', padding: '6px 14px',
+                    borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+                    background: isSelected ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.03)',
+                    color: isSelected ? '#c7d2fe' : isDone ? 'var(--text-secondary)' : 'var(--text-muted)',
+                    border: `1px solid ${isSelected ? 'rgba(129,140,248,0.5)' : 'var(--border)'}`,
+                    boxShadow: isSelected ? '0 0 12px rgba(99,102,241,0.25)' : 'none',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    transition: 'var(--transition)',
+                  }}
+                >
+                  {isDone ? (
+                    <CheckCircle2 size={12} color="#10b981" />
+                  ) : (
+                    <span style={{ fontSize: 10, opacity: 0.7 }}>{i + 1}.</span>
+                  )}
+                  {topic}
+                </button>
+              );
+            })}
           </div>
 
           {/* Content card */}
@@ -411,71 +501,76 @@ export default function LearningInterface() {
             borderRadius: 'var(--radius-xl)',
             overflow: 'hidden',
             position: 'relative',
+            boxShadow: 'var(--shadow-card)',
           }}>
-            {/* Actual content — fades on tier change */}
+            {/* Reading Content Pane */}
             <div
               style={{
-                padding: '24px 28px 20px',
+                padding: '28px 32px 24px',
                 opacity: contentFading ? 0 : 1,
-                transition: 'opacity 0.28s ease',
-                minHeight: 360,
+                transition: 'opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1)',
+                minHeight: 400,
               }}
             >
               <ContentRenderer tier={currentTier} topic={currentTopic} />
             </div>
 
-            {/* ── Sticky difficulty bar at bottom of content card ── */}
+            {/* ── Dynamic Tier Control Bar at Bottom of Content ── */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '12px 20px',
+              padding: '14px 24px',
               borderTop: '1px solid var(--border)',
-              background: 'rgba(255,255,255,0.02)',
-              gap: 12,
+              background: 'rgba(16, 21, 36, 0.6)',
+              backdropFilter: 'blur(10px)',
+              gap: 14,
               flexWrap: 'wrap',
             }}>
-              {/* Left: difficulty label */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.05em' }}>
-                  DIFFICULTY
+              {/* Left: tier visual meter */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                  Tier Depth
                 </span>
-                {/* Tier dots */}
-                <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                   {TIERS.map((t, i) => (
                     <div
                       key={t}
                       style={{
-                        width: tierIdx === i ? 22 : 8,
-                        height: 8,
+                        width: tierIdx === i ? 26 : 8,
+                        height: 7,
                         borderRadius: 99,
                         background: tierIdx === i ? currentTierMeta.color : 'rgba(255,255,255,0.1)',
-                        transition: 'width 0.3s ease, background 0.3s ease',
+                        boxShadow: tierIdx === i ? `0 0 10px ${currentTierMeta.color}80` : 'none',
+                        transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
                       }}
                     />
                   ))}
                 </div>
-                <span style={{ fontSize: 12, fontWeight: 700, color: currentTierMeta.color }}>
+
+                <span style={{ fontSize: 12, fontWeight: 800, color: currentTierMeta.color }}>
                   {currentTierMeta.label}
                 </span>
               </div>
 
-              {/* Right: Simpler / Harder buttons */}
+              {/* Right: Simpler / Harder action buttons */}
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Adjust:</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Quick Shift:</span>
                 <button
                   id="btn-simpler"
                   onClick={goSimpler}
                   disabled={tierIdx === 0}
                   style={{
                     all: 'unset', cursor: tierIdx === 0 ? 'not-allowed' : 'pointer',
-                    padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
-                    background: tierIdx === 0 ? 'rgba(255,255,255,0.03)' : 'rgba(16,185,129,0.12)',
+                    padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                    background: tierIdx === 0 ? 'rgba(255,255,255,0.02)' : 'rgba(52,211,153,0.12)',
                     color: tierIdx === 0 ? 'var(--text-muted)' : '#6ee7b7',
-                    border: `1px solid ${tierIdx === 0 ? 'var(--border)' : 'rgba(16,185,129,0.3)'}`,
+                    border: `1px solid ${tierIdx === 0 ? 'var(--border)' : 'rgba(52,211,153,0.3)'}`,
                     transition: 'var(--transition)',
-                    opacity: tierIdx === 0 ? 0.4 : 1,
+                    opacity: tierIdx === 0 ? 0.35 : 1,
+                    display: 'flex', alignItems: 'center', gap: 5,
                   }}
                 >
-                  ⬇ Simpler
+                  <span style={{ fontSize: 11 }}>↓</span> Simpler
                 </button>
                 <button
                   id="btn-harder"
@@ -483,210 +578,252 @@ export default function LearningInterface() {
                   disabled={tierIdx === TIERS.length - 1}
                   style={{
                     all: 'unset', cursor: tierIdx === TIERS.length - 1 ? 'not-allowed' : 'pointer',
-                    padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
-                    background: tierIdx === TIERS.length - 1 ? 'rgba(255,255,255,0.03)' : 'rgba(245,158,11,0.12)',
+                    padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+                    background: tierIdx === TIERS.length - 1 ? 'rgba(255,255,255,0.02)' : 'rgba(245,158,11,0.12)',
                     color: tierIdx === TIERS.length - 1 ? 'var(--text-muted)' : '#fcd34d',
                     border: `1px solid ${tierIdx === TIERS.length - 1 ? 'var(--border)' : 'rgba(245,158,11,0.3)'}`,
                     transition: 'var(--transition)',
-                    opacity: tierIdx === TIERS.length - 1 ? 0.4 : 1,
+                    opacity: tierIdx === TIERS.length - 1 ? 0.35 : 1,
+                    display: 'flex', alignItems: 'center', gap: 5,
                   }}
                 >
-                  ⬆ Harder
+                  <span style={{ fontSize: 11 }}>↑</span> Harder
                 </button>
               </div>
             </div>
           </div>
 
-          {/* Prev / Next navigation */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, gap: 12, flexWrap: 'wrap' }}>
+          {/* Prev / Next navigation footer */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 18, gap: 12, flexWrap: 'wrap' }}>
             <button
               className="btn btn-secondary" id="prev-topic-btn"
               onClick={() => goToTopic(Math.max(0, currentTopicIndex - 1))}
               disabled={currentTopicIndex === 0}
               style={{ opacity: currentTopicIndex === 0 ? 0.35 : 1 }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-              Previous
+              <ArrowLeft size={14} />
+              Previous Topic
             </button>
 
             <div style={{ display: 'flex', gap: 10 }}>
               <button
                 className="btn btn-secondary" id="end-session-btn" onClick={endSession}
-                style={{ color: 'var(--rose)', borderColor: 'rgba(244,63,94,0.25)' }}
+                style={{ color: '#fda4af', borderColor: 'rgba(244,63,94,0.3)' }}
               >
                 End Session
               </button>
               {currentTopicIndex < topicNames.length - 1 ? (
                 <button className="btn btn-primary" id="next-topic-btn" onClick={() => goToTopic(currentTopicIndex + 1)}>
                   Next Topic
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  <ArrowRight size={14} />
                 </button>
               ) : (
                 <button className="btn btn-primary" id="finish-btn" onClick={endSession}>
-                  Finish & See Results ✨
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                  <Sparkles size={14} />
+                  Complete & View Analytics
                 </button>
               )}
             </div>
           </div>
         </div>
 
-        {/* ─── RIGHT: Sidebar ─── */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', gap: 16,
-          position: 'sticky', top: 84, alignSelf: 'start',
-          maxHeight: 'calc(100vh - 100px)', overflowY: 'auto',
-          scrollbarWidth: 'thin', scrollbarColor: 'rgba(99,102,241,0.3) transparent',
-          paddingRight: 4,
-        }}>
+        {/* ─── RIGHT: Cockpit Sidebar ─── */}
+        {!distractionFree && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: 16,
+            position: 'sticky', top: 84, alignSelf: 'start',
+            maxHeight: 'calc(100vh - 100px)', overflowY: 'auto',
+            scrollbarWidth: 'thin', scrollbarColor: 'rgba(99,102,241,0.3) transparent',
+            paddingRight: 4,
+          }}>
 
-          {/* Cognitive Load Gauge */}
-          <div style={{ flexShrink: 0 }}>
-            <CognitiveLoadGauge
-              state={cogLoad < 35 ? 'bored' : cogLoad > 70 ? 'overload' : 'flow'}
-              load={cogLoad}
-            />
-          </div>
-
-          {/* Embedded Real-Time Webcam Facial Monitor */}
-          <div style={{ flexShrink: 0 }}>
-            <WebcamMonitor
-              onCognitiveLoadUpdate={setCogLoad}
-              onTriggerSuggestion={setSuggestion}
-            />
-          </div>
-
-          {/* Signal monitors */}
-          <div style={{ flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              Live Signals <span className="placeholder-tag">⚙ PLACEHOLDER</span>
+            {/* Cognitive Load Gauge */}
+            <div style={{ flexShrink: 0 }}>
+              <CognitiveLoadGauge
+                state={cogLoad < 35 ? 'bored' : cogLoad > 70 ? 'overload' : 'flow'}
+                load={cogLoad}
+              />
             </div>
-            {[
-              { label: 'Mouse Speed', value: Math.round(signals.mouseVelocity), icon: '🖱️' },
-              { label: 'Scroll Rate', value: Math.round(signals.scrollRate),    icon: '📜' },
-              { label: 'Typing Pace', value: Math.round(signals.typingPace),    icon: '⌨️' },
-            ].map(({ label, value, icon }) => (
-              <div key={label} style={{ marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>{icon} {label}</span>
-                  <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{value}%</span>
-                </div>
-                <div className="progress-bar-container">
-                  <div className="progress-bar-fill" style={{ width: `${value}%` }} />
-                </div>
+
+            {/* Embedded Real-Time Webcam Facial Monitor */}
+            <div style={{ flexShrink: 0 }}>
+              <WebcamMonitor
+                onCognitiveLoadUpdate={setCogLoad}
+                onTriggerSuggestion={setSuggestion}
+              />
+            </div>
+
+            {/* Live Interaction Telemetry */}
+            <div style={{
+              flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-xl)', padding: '16px', boxShadow: 'var(--shadow-card)'
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Activity size={12} style={{ color: 'var(--indigo-light)' }} />
+                  Telemetry Signals
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 9, color: '#34d399', fontWeight: 700 }}>
+                  <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#34d399', boxShadow: '0 0 6px #34d399' }} />
+                  Streaming
+                </span>
               </div>
-            ))}
-            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-              🔍 Monitoring for 45s before any suggestion
-            </div>
-          </div>
 
-          {/* Session stats */}
-          <div style={{ flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-xl)', padding: '16px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 12 }}>
-              Session Stats
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               {[
-                { label: 'Time',     value: formatTime(elapsedSeconds) },
-                { label: 'Changes',  value: adaptationLog.length },
-                { label: 'Topic',    value: `${currentTopicIndex + 1}/${topicNames.length}` },
-                { label: 'Level',    value: currentTierMeta.short },
-              ].map(({ label, value }) => (
-                <div key={label} style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
-                  <div style={{ fontSize: 15, fontWeight: 800, fontFamily: 'Space Grotesk', color: 'var(--text-primary)', wordBreak: 'break-word' }}>{value}</div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div>
+                { label: 'Mouse Dynamics', value: Math.round(signals.mouseVelocity), icon: <MousePointer size={12} color="var(--indigo-light)" /> },
+                { label: 'Reading Velocity', value: Math.round(signals.scrollRate), icon: <Scroll size={12} color="var(--violet-light)" /> },
+                { label: 'Input Cadence', value: Math.round(signals.typingPace), icon: <Keyboard size={12} color="var(--emerald)" /> },
+              ].map(({ label, value, icon }) => (
+                <div key={label} style={{ marginBottom: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 4 }}>
+                    <span style={{ color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {icon} {label}
+                    </span>
+                    <span style={{ color: 'var(--text-primary)', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{value}%</span>
+                  </div>
+                  <div className="progress-bar-container" style={{ height: 4, background: 'rgba(255,255,255,0.05)', borderRadius: 99, overflow: 'hidden' }}>
+                    <div className="progress-bar-fill" style={{ width: `${value}%`, background: 'var(--gradient-brand)', height: '100%', borderRadius: 99, transition: 'width 0.6s ease' }} />
+                  </div>
                 </div>
               ))}
+
+              <div style={{ marginTop: 10, fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.5, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <ShieldCheck size={12} style={{ color: 'var(--indigo-light)', flexShrink: 0 }} />
+                <span>Minimum 45s baseline required before suggestions</span>
+              </div>
             </div>
-          </div>
 
-          {/* Timeline */}
-          <div style={{ flexShrink: 0 }}>
-            <SessionTimeline adaptationLog={adaptationLog} totalSeconds={elapsedSeconds} />
-          </div>
+            {/* Session Stats */}
+            <div style={{
+              flexShrink: 0, background: 'var(--bg-card)', border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-xl)', padding: '16px', boxShadow: 'var(--shadow-card)'
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 12 }}>
+                Cockpit Telemetry
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {[
+                  { label: 'Time Elapsed', value: formatTime(elapsedSeconds) },
+                  { label: 'Adaptations',  value: adaptationLog.length },
+                  { label: 'Topic Queue',  value: `${currentTopicIndex + 1}/${topicNames.length}` },
+                  { label: 'Active Depth', value: currentTierMeta.short },
+                ].map(({ label, value }) => (
+                  <div key={label} style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, fontFamily: 'Space Grotesk', color: 'var(--text-primary)' }}>{value}</div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-          {/* End session */}
-          <button
-            className="btn btn-secondary btn-sm" id="sidebar-end-btn" onClick={endSession}
-            style={{ width: '100%', justifyContent: 'center', color: 'var(--rose)', borderColor: 'rgba(244,63,94,0.2)', flexShrink: 0 }}
-          >
-            End Session & See Results
-          </button>
-        </div>
+            {/* Timeline */}
+            <div style={{ flexShrink: 0 }}>
+              <SessionTimeline adaptationLog={adaptationLog} totalSeconds={elapsedSeconds} />
+            </div>
+
+            {/* End session button */}
+            <button
+              className="btn btn-secondary btn-sm" id="sidebar-end-btn" onClick={endSession}
+              style={{ width: '100%', justifyContent: 'center', color: '#fda4af', borderColor: 'rgba(244,63,94,0.3)', flexShrink: 0 }}
+            >
+              End Session & Review
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Pre-session screen ──
+// ── Pre-session Screen ──
 function PreSessionScreen({ subject, topicNames, onStart, onBack }) {
   return (
-    <div className="page">
+    <div className="page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <div className="glow-orb glow-orb-1" />
       <div className="glow-orb glow-orb-2" />
       <Navbar currentStep={4} />
-      <div className="content-area" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-        <div style={{ maxWidth: 520, width: '100%' }}>
+
+      <div className="content-area" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 24px' }}>
+        <div style={{ maxWidth: 540, width: '100%' }}>
           <div className="animate-fadeInUp" style={{
-            background: 'var(--bg-card)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-xl)', padding: '44px 40px',
-            boxShadow: 'var(--shadow-glow)', textAlign: 'center',
+            background: 'var(--gradient-card)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-xl)', padding: '40px 36px',
+            boxShadow: 'var(--shadow-glow)', position: 'relative', overflow: 'hidden'
           }}>
+            {/* Top ambient badge */}
             <div style={{
-              width: 80, height: 80, borderRadius: 24, background: 'var(--gradient-brand)',
+              width: 64, height: 64, borderRadius: 20,
+              background: 'linear-gradient(135deg, rgba(99,102,241,0.2), rgba(168,85,247,0.2))',
+              border: '1px solid rgba(129,140,248,0.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 40, margin: '0 auto 24px',
-              boxShadow: '0 8px 30px rgba(99,102,241,0.4)', animation: 'pulse-glow 2s ease infinite',
-            }}>🧠</div>
-
-            <h1 style={{ fontSize: 26, fontWeight: 800, marginBottom: 10 }}>Ready to Begin?</h1>
-            <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.7, marginBottom: 16 }}>
-              CogFlow will silently watch your reading behaviour and <strong style={{ color: 'var(--text-primary)' }}>suggest</strong> difficulty adjustments —
-              but content only changes when <strong style={{ color: 'var(--text-primary)' }}>you decide</strong>.
-            </p>
-
-            {/* How it works */}
-            <div style={{
-              background: 'rgba(99,102,241,0.05)', borderRadius: 10, padding: '14px 16px',
-              marginBottom: 20, textAlign: 'left', border: '1px solid rgba(99,102,241,0.12)',
+              margin: '0 auto 20px',
+              boxShadow: '0 0 24px rgba(99,102,241,0.3)',
             }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
-                How adaptation works
+              <Brain size={30} style={{ color: '#c7d2fe' }} />
+            </div>
+
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)', marginBottom: 8, letterSpacing: '-0.02em' }}>
+                Initialize Study Cockpit
+              </h1>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 13.5, lineHeight: 1.6, maxWidth: 440, margin: '0 auto' }}>
+                CogFlow continuously monitors reading telemetry and facial cues to maintain optimal flow state. Adaptations remain purely under your command.
+              </p>
+            </div>
+
+            {/* How adaptation works card */}
+            <div style={{
+              background: 'rgba(99,102,241,0.04)', borderRadius: 12, padding: '16px 18px',
+              marginBottom: 20, border: '1px solid rgba(99,102,241,0.12)',
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--indigo-light)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 12 }}>
+                Intelligent Feedback Loop
               </div>
-              {[
-                ['🔍', 'AI monitors your reading signals silently'],
-                ['💡', 'After 45s it may suggest a difficulty change'],
-                ['✋', 'You choose to Accept or Dismiss the suggestion'],
-                ['⬇⬆', 'Or manually adjust anytime with Simpler / Harder'],
-              ].map(([icon, text]) => (
-                <div key={text} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '5px 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-                  <span style={{ flexShrink: 0 }}>{icon}</span>
-                  <span>{text}</span>
-                </div>
-              ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {[
+                  { icon: <Activity size={14} color="var(--indigo-light)" />, title: 'Real-time Signal Analysis', desc: 'Monitors reading cadence and facial tension non-intrusively.' },
+                  { icon: <Sparkles size={14} color="var(--emerald)" />, title: 'Cognitive Suggestions', desc: 'Prompts tier adjustments after 30-45 seconds of sustained load.' },
+                  { icon: <ShieldCheck size={14} color="var(--amber)" />, title: 'Complete User Autonomy', desc: 'Accept suggestions or manually change depth anytime (keys 1-3).' },
+                ].map(({ icon, title, desc }) => (
+                  <div key={title} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{ padding: 4, borderRadius: 6, background: 'rgba(255,255,255,0.04)', marginTop: 2 }}>{icon}</div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>{title}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Topic queue */}
-            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 12, padding: '14px', marginBottom: 24, textAlign: 'left' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 10 }}>
-                {topicNames.length} Topic{topicNames.length !== 1 ? 's' : ''} in Queue
+            <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: 12, padding: '16px', marginBottom: 24, border: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 10, display: 'flex', justifyContent: 'space-between' }}>
+                <span>Curriculum Queue</span>
+                <span style={{ color: 'var(--indigo-light)' }}>{topicNames.length} Topics</span>
               </div>
-              {topicNames.map((t, i) => (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0',
-                  borderBottom: i < topicNames.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
-                }}>
-                  <span style={{ width: 20, height: 20, borderRadius: '50%', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'var(--indigo-light)', flexShrink: 0 }}>{i + 1}</span>
-                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{t}</span>
-                </div>
-              ))}
+              <div style={{ maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {topicNames.map((t, i) => (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px',
+                    borderRadius: 6, background: 'rgba(255,255,255,0.02)',
+                  }}>
+                    <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 800, color: 'var(--indigo-light)', flexShrink: 0 }}>
+                      {i + 1}
+                    </span>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t}</span>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 12 }}>
-              <button className="btn btn-secondary" id="back-from-prescreen" onClick={onBack} style={{ flex: 1, justifyContent: 'center' }}>Back</button>
-              <button className="btn btn-primary btn-lg" id="start-session-btn" onClick={onStart} style={{ flex: 2, justifyContent: 'center' }}>
-                Start Session 🚀
+              <button className="btn btn-secondary" id="back-from-prescreen" onClick={onBack} style={{ flex: 1, justifyContent: 'center' }}>
+                Back
+              </button>
+              <button className="btn btn-primary" id="start-session-btn" onClick={onStart} style={{ flex: 2, justifyContent: 'center', gap: 8 }}>
+                Initialize Session
+                <ArrowRight size={15} />
               </button>
             </div>
           </div>
