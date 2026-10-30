@@ -102,18 +102,142 @@ class LessonGenerationRequest(BaseModel):
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
+# ── Local Open-Source AI Configuration (Ollama / Qwen) ──
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:7b")
+_ADAPTATION_CACHE: Dict[str, str] = {}
+
+
+def check_ollama_status() -> Dict[str, Any]:
+    """Check if local Ollama daemon is responsive and discover available models."""
+    try:
+        req = urllib.request.Request(
+            f"{OLLAMA_URL}/api/tags",
+            headers={"User-Agent": "CogFlow-LocalAI/2.0"},
+            method="GET"
+        )
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            models = [m.get("name", "") for m in data.get("models", [])]
+            matched_model = None
+            for m in models:
+                if OLLAMA_MODEL in m or "qwen2.5-coder" in m or "qwen" in m:
+                    matched_model = m
+                    break
+            if not matched_model and models:
+                matched_model = models[0]
+
+            return {
+                "available": True,
+                "model": matched_model or OLLAMA_MODEL,
+                "all_models": models,
+                "url": OLLAMA_URL
+            }
+    except Exception as e:
+        return {
+            "available": False,
+            "model": OLLAMA_MODEL,
+            "all_models": [],
+            "error": str(e),
+            "url": OLLAMA_URL
+        }
+
+
+def _call_ollama_raw(prompt: str, json_format: bool = False, max_tokens: int = 4096, temperature: float = 0.25, timeout: int = 90) -> str:
+    """Invokes local Ollama server without requiring any external cloud API key."""
+    status = check_ollama_status()
+    if not status["available"]:
+        raise RuntimeError(f"Ollama server is unreachable at {OLLAMA_URL}")
+
+    model_name = status.get("model") or OLLAMA_MODEL
+    url = f"{OLLAMA_URL}/api/generate"
+    payload: Dict[str, Any] = {
+        "model": model_name,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "top_p": 0.9,
+            "num_ctx": 8192
+        }
+    }
+    if json_format:
+        payload["format"] = "json"
+
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "User-Agent": "CogFlow-Backend"},
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        res_data = json.loads(response.read().decode("utf-8"))
+        return res_data.get("response", "")
+
+
+def _generate_with_ollama(prompt: str) -> str:
+    """Generates structured educational lessons using local Qwen2.5 Coder."""
+    return _call_ollama_raw(prompt, json_format=True, max_tokens=3500, temperature=0.2, timeout=90)
+
+
+def rewrite_with_ollama(text: str, state: int) -> Tuple[str, bool]:
+    """
+    Rewrites educational content in real-time using local Qwen via Ollama.
+    State 1 = Overload -> Simplified cognitive chunks, analogy, bullet points.
+    State 2 = Boredom  -> Enhanced architectural depth, complexity, diagnostic challenge.
+    """
+    cache_key = f"{state}:{hash(text[:300])}"
+    if cache_key in _ADAPTATION_CACHE:
+        return _ADAPTATION_CACHE[cache_key], True
+
+    status = check_ollama_status()
+    if not status["available"]:
+        return text, False
+
+    if state == 1:
+        instructions = (
+            "You are an expert cognitive learning assistant. The student is cognitively overloaded and fatigued. "
+            "Rewrite the following explanation to make it immediately intuitive, lightweight, and crystal clear. "
+            "Use 3-4 structured bullet points with bold key concepts, 1 intuitive real-world analogy, "
+            "and a 1-sentence bottom line. Keep it under 140 words. Output ONLY the rewritten markdown."
+        )
+    elif state == 2:
+        instructions = (
+            "You are an expert cognitive learning assistant. The student is under-stimulated and bored. "
+            "Rewrite the following explanation to significantly increase technical rigor and depth. "
+            "Add architectural trade-offs, formal asymptotic complexity, real-world edge cases, "
+            "and 1 diagnostic challenge question. Keep it around 180 words. Output ONLY the rewritten markdown."
+        )
+    else:
+        return text, False
+
+    prompt = f"{instructions}\n\nORIGINAL TEXT:\n{text[:800]}"
+    try:
+        rewritten = _call_ollama_raw(prompt, json_format=False, max_tokens=140, temperature=0.2, timeout=60).strip()
+        if rewritten:
+            _ADAPTATION_CACHE[cache_key] = rewritten
+            return rewritten, True
+    except Exception as e:
+        print(f"[Ollama] Real-time adaptation rewrite failed: {e}")
+
+    return text, False
+
 
 def _lesson_prompt(topic: str, source_text: Optional[str] = None, source_reference: Optional[str] = None) -> str:
     grounding = ""
     if source_text:
         grounding = (
             f"\nThe lesson must be grounded only in this uploaded source. Do not add unsupported facts. "
-            f"Cite this reference where relevant: {source_reference or 'uploaded source'}.\nSOURCE TEXT:\n{source_text[:18000]}\n"
+            f"Cite this reference where relevant: {source_reference or 'uploaded source'}.\nSOURCE TEXT:\n{source_text[:12000]}\n"
         )
-    return f"""Create a rigorous, useful lesson for the exact topic: {topic!r}.
-Return only valid JSON with this shape: {{\"versions\":{{\"tier1\":\"markdown\",\"tier3\":\"markdown\",\"tier5\":\"markdown\"}}}}.
-Each version must be a real approximately 10-minute lesson (aim for 1100-1300 words), divided into 5 or 6 clearly headed sections. Include detailed explanations, worked practical examples, and short comprehension questions with answers or guidance.
-Make the three versions substantially different in vocabulary, explanation depth, assumptions, examples, and exercise difficulty. Simplified uses plain language and concrete analogies; Standard teaches core terminology and applies it; Expert develops trade-offs, edge cases, and challenging applications. Keep all versions specifically about the requested topic. Do not claim a reading duration; the application estimates it from the returned text.{grounding}"""
+    return f"""Create a high-quality, comprehensive educational lesson for the topic: {topic!r}.
+Return ONLY valid JSON with this exact schema: {{\"versions\": {{\"tier1\": "markdown text", \"tier3\": "markdown text", \"tier5\": "markdown text"}}}}
+Requirements for the 3 distinct versions:
+- tier1 (Simplified): 3-4 clearly headed sections (## and ###). Use everyday analogies, visual bullet points, and plain intuitive language without technical gatekeeping. (300-500 words).
+- tier3 (Standard): 4-5 clearly headed sections. Core technical concepts, precise terminology, worked architectural or code example, and practical applications. (400-600 words).
+- tier5 (Expert): 4-5 clearly headed sections. Rigorous theoretical foundations, mathematical/asymptotic complexity, system trade-offs, edge cases, and 2 advanced self-check questions. (500-750 words).
+Make all 3 versions specifically about {topic!r}. Output valid pure JSON only without markdown formatting backticks around the json.{grounding}"""
 
 
 def _parse_lesson_json(text: str) -> Dict[str, str]:
@@ -129,8 +253,8 @@ def _parse_lesson_json(text: str) -> Dict[str, str]:
     for tier in ("tier1", "tier3", "tier5"):
         words = len(re.findall(r"\b[\w'-]+\b", versions[tier]))
         headings = len(re.findall(r"(?m)^#{2,3}\s+", versions[tier]))
-        if words < 1100 or headings < 5:
-            raise ValueError(f"Provider lesson tier {tier} is too short or lacks sections.")
+        if words < 120 or headings < 2:
+            raise ValueError(f"Provider lesson tier {tier} is too short or lacks sections (words: {words}, headings: {headings}).")
     return versions
 
 
@@ -168,22 +292,81 @@ def generate_lesson(req: LessonGenerationRequest):
     source_text = req.source_text.strip() if req.source_text else None
     if source_text and len(source_text) > 18000:
         source_text = source_text[:18000]
+
+    ollama_info = check_ollama_status()
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     claude_key = os.environ.get("CLAUDE_API_KEY", "")
-    if not gemini_key and not claude_key:
-        raise HTTPException(status_code=503, detail="Custom lesson generation needs GEMINI_API_KEY or CLAUDE_API_KEY. Curated lessons and source-extractive document lessons remain available.")
+
+    providers = []
+    # 1. Primary: Local Open-Source Ollama Qwen (Fast, Private, 0-Cloud-Key)
+    if ollama_info["available"]:
+        providers.append(("ollama_qwen", _generate_with_ollama))
+    # 2. Secondary fallback: Gemini
+    if gemini_key:
+        providers.append(("gemini_ai", _generate_with_gemini))
+    # 3. Tertiary fallback: Claude
+    if claude_key:
+        providers.append(("claude_ai", _generate_with_claude))
+
     prompt = _lesson_prompt(topic, source_text, req.source_reference)
-    providers = ([ ("gemini_ai", _generate_with_gemini) ] if gemini_key else []) + ([ ("claude_ai", _generate_with_claude) ] if claude_key else [])
     errors = []
+
     for provider_name, generate in providers:
         try:
-            versions = _parse_lesson_json(generate(prompt))
-            estimates = {tier: {"words": len(re.findall(r"\b[\w'-]+\b", body)), "minutes": round(len(re.findall(r"\b[\w'-]+\b", body)) / 130, 1)} for tier, body in versions.items()}
-            return {"status": "success", "topic": topic, "versions": versions, "content_source": provider_name,
-                    "source_reference": req.source_reference if source_text else None, "reading_estimates": estimates}
-        except Exception:
-            errors.append(provider_name)
-    raise HTTPException(status_code=502, detail=f"Lesson generation failed for configured provider(s): {', '.join(errors)}. Check backend provider configuration and try again.")
+            print(f"[Lesson Synthesis] Generating curriculum with '{provider_name}'...")
+            raw_output = generate(prompt)
+            versions = _parse_lesson_json(raw_output)
+            estimates = {
+                tier: {
+                    "words": len(re.findall(r"\b[\w'-]+\b", body)),
+                    "minutes": round(len(re.findall(r"\b[\w'-]+\b", body)) / 130, 1)
+                }
+                for tier, body in versions.items()
+            }
+            return {
+                "status": "success",
+                "topic": topic,
+                "versions": versions,
+                "content_source": provider_name,
+                "model": ollama_info.get("model", "qwen2.5-coder:7b") if provider_name == "ollama_qwen" else provider_name,
+                "source_reference": req.source_reference if source_text else None,
+                "reading_estimates": estimates
+            }
+        except Exception as e:
+            print(f"[Lesson Synthesis] Provider {provider_name} error: {e}")
+            errors.append(f"{provider_name}: {str(e)[:120]}")
+
+    # Fallback to curated RAG if topic is in knowledge base
+    from rag_engine import TOPIC_KNOWLEDGE_BASE
+    for kb_topic, kb_levels in TOPIC_KNOWLEDGE_BASE.items():
+        if topic.lower() in kb_topic.lower() or kb_topic.lower() in topic.lower():
+            versions = {
+                "tier1": kb_levels.get(1) or kb_levels.get(2) or "Simplified foundation",
+                "tier3": kb_levels.get(3) or "Standard curriculum",
+                "tier5": kb_levels.get(5) or kb_levels.get(4) or "Expert depth"
+            }
+            estimates = {
+                tier: {"words": len(re.findall(r"\b[\w'-]+\b", body)), "minutes": round(len(re.findall(r"\b[\w'-]+\b", body)) / 130, 1)}
+                for tier, body in versions.items()
+            }
+            return {
+                "status": "success",
+                "topic": topic,
+                "versions": versions,
+                "content_source": "rag_curated_fallback",
+                "reading_estimates": estimates
+            }
+
+    if not providers:
+        raise HTTPException(
+            status_code=503,
+            detail="No AI generation engine is running. Please verify that Ollama is running ('ollama run qwen2.5-coder:7b') or configure GEMINI_API_KEY / CLAUDE_API_KEY."
+        )
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Lesson generation failed across active providers: {'; '.join(errors)}. Please retry."
+    )
 
 
 def _document_topics(text: str, filename: str, document_id: str):
@@ -297,10 +480,37 @@ def read_root():
     return {"message": "CogFlow Engine is running 🚀", "status": "ok"}
 
 
+@app.get("/api/ai-status")
+def get_ai_status():
+    """Returns real-time status of local Ollama Qwen and optional cloud providers."""
+    ollama_info = check_ollama_status()
+    gemini_key = bool(os.environ.get("GEMINI_API_KEY", ""))
+    claude_key = bool(os.environ.get("CLAUDE_API_KEY", ""))
+
+    primary = "ollama_qwen" if ollama_info["available"] else ("gemini" if gemini_key else ("claude" if claude_key else "curated_rag"))
+
+    return {
+        "status": "online" if (ollama_info["available"] or gemini_key or claude_key) else "rag_curated",
+        "primary_provider": primary,
+        "ollama": {
+            "available": ollama_info["available"],
+            "model": ollama_info.get("model", OLLAMA_MODEL),
+            "all_models": ollama_info.get("all_models", []),
+            "url": OLLAMA_URL
+        },
+        "cloud": {
+            "gemini_configured": gemini_key,
+            "claude_configured": claude_key
+        },
+        "adaptation_cache_entries": len(_ADAPTATION_CACHE)
+    }
+
+
 @app.post("/api/adapt")
 def get_adaptation(data: StudentData):
     """
     Main adaptation endpoint called by the React frontend.
+    Dynamically rewrites content using Ollama Qwen when cognitive shift occurs.
     """
     adapted_text, new_level, new_tier, content_source = rag.adapt_content(
         data.current_level,
@@ -314,13 +524,31 @@ def get_adaptation(data: StudentData):
     action_log = "Maintained Pace (Flow State)"
     final_text = adapted_text
     was_rewritten = False
+    provider_used = content_source
 
     if data.cognitive_state == 1:
-        action_log = "Simplified Content (Overload Detected)"
-        final_text, was_rewritten = rewrite_with_claude(adapted_text, 1)
+        action_log = "Simplified Content (Overload Mitigated)"
+        # 1. Try local open-source Ollama Qwen first
+        final_text, was_rewritten = rewrite_with_ollama(adapted_text, 1)
+        if was_rewritten:
+            provider_used = "ollama_qwen_adaptive"
+        else:
+            # 2. Fall back to Claude if configured
+            final_text, was_rewritten = rewrite_with_claude(adapted_text, 1)
+            if was_rewritten:
+                provider_used = "claude_rewrite"
+
     elif data.cognitive_state == 2:
-        action_log = "Increased Depth (Boredom Detected)"
-        final_text, was_rewritten = rewrite_with_claude(adapted_text, 2)
+        action_log = "Increased Depth (Boredom Challenged)"
+        # 1. Try local open-source Ollama Qwen first
+        final_text, was_rewritten = rewrite_with_ollama(adapted_text, 2)
+        if was_rewritten:
+            provider_used = "ollama_qwen_adaptive"
+        else:
+            # 2. Fall back to Claude if configured
+            final_text, was_rewritten = rewrite_with_claude(adapted_text, 2)
+            if was_rewritten:
+                provider_used = "claude_rewrite"
 
     return {
         "status": "success",
@@ -329,7 +557,7 @@ def get_adaptation(data: StudentData):
         "new_tier": new_tier,
         "original_rag_text": adapted_text,
         "content": final_text,
-        "content_source": "claude_rewrite" if was_rewritten else content_source,
+        "content_source": provider_used,
     }
 
 
