@@ -143,8 +143,8 @@ def check_ollama_status() -> Dict[str, Any]:
         }
 
 
-def _call_ollama_raw(prompt: str, json_format: bool = False, max_tokens: int = 4096, temperature: float = 0.25, timeout: int = 90) -> str:
-    """Invokes local Ollama server without requiring any external cloud API key."""
+def _call_ollama_raw(prompt: str, json_format: bool = False, max_tokens: int = 2048, num_ctx: int = 2048, temperature: float = 0.2, timeout: int = 60) -> str:
+    """Invokes local Ollama server with optimized CPU/GPU context size."""
     status = check_ollama_status()
     if not status["available"]:
         raise RuntimeError(f"Ollama server is unreachable at {OLLAMA_URL}")
@@ -159,7 +159,7 @@ def _call_ollama_raw(prompt: str, json_format: bool = False, max_tokens: int = 4
             "temperature": temperature,
             "num_predict": max_tokens,
             "top_p": 0.9,
-            "num_ctx": 8192
+            "num_ctx": num_ctx
         }
     }
     if json_format:
@@ -178,14 +178,13 @@ def _call_ollama_raw(prompt: str, json_format: bool = False, max_tokens: int = 4
 
 def _generate_with_ollama(prompt: str) -> str:
     """Generates structured educational lessons using local Qwen2.5 Coder."""
-    return _call_ollama_raw(prompt, json_format=True, max_tokens=3500, temperature=0.2, timeout=90)
+    return _call_ollama_raw(prompt, json_format=True, max_tokens=1800, num_ctx=3072, temperature=0.2, timeout=120)
 
 
 def rewrite_with_ollama(text: str, state: int) -> Tuple[str, bool]:
     """
     Rewrites educational content in real-time using local Qwen via Ollama.
-    State 1 = Overload -> Simplified cognitive chunks, analogy, bullet points.
-    State 2 = Boredom  -> Enhanced architectural depth, complexity, diagnostic challenge.
+    Optimized for high-speed CPU/GPU token throughput with in-memory caching.
     """
     cache_key = f"{state}:{hash(text[:300])}"
     if cache_key in _ADAPTATION_CACHE:
@@ -197,29 +196,27 @@ def rewrite_with_ollama(text: str, state: int) -> Tuple[str, bool]:
 
     if state == 1:
         instructions = (
-            "You are an expert cognitive learning assistant. The student is cognitively overloaded and fatigued. "
-            "Rewrite the following explanation to make it immediately intuitive, lightweight, and crystal clear. "
-            "Use 3-4 structured bullet points with bold key concepts, 1 intuitive real-world analogy, "
-            "and a 1-sentence bottom line. Keep it under 140 words. Output ONLY the rewritten markdown."
+            "You are a cognitive load adaptation assistant. The student is overwhelmed. "
+            "Rewrite the explanation into exactly 3 concise, intuitive bullet points with bold keywords "
+            "and 1 short analogy. Keep total response under 50 words. Output ONLY the rewritten markdown."
         )
     elif state == 2:
         instructions = (
-            "You are an expert cognitive learning assistant. The student is under-stimulated and bored. "
-            "Rewrite the following explanation to significantly increase technical rigor and depth. "
-            "Add architectural trade-offs, formal asymptotic complexity, real-world edge cases, "
-            "and 1 diagnostic challenge question. Keep it around 180 words. Output ONLY the rewritten markdown."
+            "You are a cognitive depth adaptation assistant. The student is bored. "
+            "Rewrite the explanation to increase technical rigor. Add computational complexity bounds "
+            "and 1 challenge question. Keep total response under 70 words. Output ONLY the rewritten markdown."
         )
     else:
         return text, False
 
-    prompt = f"{instructions}\n\nORIGINAL TEXT:\n{text[:800]}"
+    prompt = f"{instructions}\n\nORIGINAL TEXT:\n{text[:500]}"
     try:
-        rewritten = _call_ollama_raw(prompt, json_format=False, max_tokens=140, temperature=0.2, timeout=60).strip()
+        rewritten = _call_ollama_raw(prompt, json_format=False, max_tokens=70, num_ctx=1536, temperature=0.2, timeout=28).strip()
         if rewritten:
             _ADAPTATION_CACHE[cache_key] = rewritten
             return rewritten, True
     except Exception as e:
-        print(f"[Ollama] Real-time adaptation rewrite failed: {e}")
+        print(f"[Ollama] Real-time adaptation rewrite notice: {e}")
 
     return text, False
 
