@@ -1,10 +1,17 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 import json
 import os
+import tempfile
+import re
+import uuid
+import urllib.request
+import urllib.error
+
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "cogflow_matplotlib"))
 
 from rag_engine import RAGEngine
 from face_analyzer import FaceAnalyzer
@@ -22,7 +29,7 @@ app = FastAPI(title="CogFlow Backend API", description="Adaptive Learning Engine
 # Initialize SQLite database schema
 init_db()
 
-# ── CORS: Allow the React frontend to call this API ──
+# ── CORS: Allow any local development port ──
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -72,6 +79,12 @@ class SessionSaveRequest(BaseModel):
 class StudentData(BaseModel):
     cognitive_state: int  # 0 = Flow, 1 = Overload, 2 = Boredom
     current_level: int    # Content difficulty level ranging from 1 to 5
+    topic: Optional[str] = None          # Active topic name from frontend
+    subject: Optional[str] = None        # Active subject name
+    current_tier: Optional[str] = None   # Current tier: tier1 / tier3 / tier5
+    target_tier: Optional[str] = None    # Target tier: tier1 / tier3 / tier5
+    curated_content: Optional[str] = None  # Curated markdown content for the target tier
+    content_source: Optional[str] = None
 
 class FrameRequest(BaseModel):
     image: str  # Base64 data URL from browser canvas
@@ -82,26 +95,189 @@ class PDFRequest(BaseModel):
     filename: str
     content: str
 
-def rewrite_with_claude(text: str, state: int):
-    # Read API key from environment variable (never hardcode keys)
+class LessonGenerationRequest(BaseModel):
+    topic: str
+    source_text: Optional[str] = None
+    source_reference: Optional[str] = None
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _lesson_prompt(topic: str, source_text: Optional[str] = None, source_reference: Optional[str] = None) -> str:
+    grounding = ""
+    if source_text:
+        grounding = (
+            f"\nThe lesson must be grounded only in this uploaded source. Do not add unsupported facts. "
+            f"Cite this reference where relevant: {source_reference or 'uploaded source'}.\nSOURCE TEXT:\n{source_text[:18000]}\n"
+        )
+    return f"""Create a rigorous, useful lesson for the exact topic: {topic!r}.
+Return only valid JSON with this shape: {{\"versions\":{{\"tier1\":\"markdown\",\"tier3\":\"markdown\",\"tier5\":\"markdown\"}}}}.
+Each version must be a real approximately 10-minute lesson (aim for 1100-1300 words), divided into 5 or 6 clearly headed sections. Include detailed explanations, worked practical examples, and short comprehension questions with answers or guidance.
+Make the three versions substantially different in vocabulary, explanation depth, assumptions, examples, and exercise difficulty. Simplified uses plain language and concrete analogies; Standard teaches core terminology and applies it; Expert develops trade-offs, edge cases, and challenging applications. Keep all versions specifically about the requested topic. Do not claim a reading duration; the application estimates it from the returned text.{grounding}"""
+
+
+def _parse_lesson_json(text: str) -> Dict[str, str]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.I)
+    parsed = json.loads(cleaned)
+    versions = parsed.get("versions", parsed)
+    if not all(isinstance(versions.get(tier), str) for tier in ("tier1", "tier3", "tier5")):
+        raise ValueError("Provider response omitted one or more lesson tiers.")
+    if len({versions[t].strip() for t in ("tier1", "tier3", "tier5")}) != 3:
+        raise ValueError("Provider returned duplicate lesson versions.")
+    for tier in ("tier1", "tier3", "tier5"):
+        words = len(re.findall(r"\b[\w'-]+\b", versions[tier]))
+        headings = len(re.findall(r"(?m)^#{2,3}\s+", versions[tier]))
+        if words < 1100 or headings < 5:
+            raise ValueError(f"Provider lesson tier {tier} is too short or lacks sections.")
+    return versions
+
+
+def _generate_with_gemini(prompt: str) -> str:
+    key = os.environ.get("GEMINI_API_KEY", "")
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 12000}}
+    request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json", "x-goog-api-key": key}, method="POST")
+    with urllib.request.urlopen(request, timeout=120) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    return "".join(part.get("text", "") for part in data["candidates"][0]["content"]["parts"])
+
+
+def _generate_with_claude(prompt: str) -> str:
+    if anthropic is None:
+        raise RuntimeError("Claude SDK is not installed.")
+    client = anthropic.Anthropic(api_key=os.environ["CLAUDE_API_KEY"])
+    versions = {}
+    for tier in ("tier1", "tier3", "tier5"):
+        tier_prompt = prompt + f"\nFor this call, return only the {tier} version as valid JSON with exactly this shape: {{\"content\":\"markdown lesson\"}}."
+        response = client.messages.create(model="claude-3-haiku-20240307", max_tokens=4096, messages=[{"role": "user", "content": tier_prompt}])
+        text = response.content[0].text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I)
+        versions[tier] = json.loads(text)["content"]
+    return json.dumps({"versions": versions})
+
+
+@app.post("/api/generate-lesson")
+def generate_lesson(req: LessonGenerationRequest):
+    topic = req.topic.strip()
+    if not topic or len(topic) > 160:
+        raise HTTPException(status_code=422, detail="Enter a topic between 1 and 160 characters.")
+    source_text = req.source_text.strip() if req.source_text else None
+    if source_text and len(source_text) > 18000:
+        source_text = source_text[:18000]
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    claude_key = os.environ.get("CLAUDE_API_KEY", "")
+    if not gemini_key and not claude_key:
+        raise HTTPException(status_code=503, detail="Custom lesson generation needs GEMINI_API_KEY or CLAUDE_API_KEY. Curated lessons and source-extractive document lessons remain available.")
+    prompt = _lesson_prompt(topic, source_text, req.source_reference)
+    providers = ([ ("gemini_ai", _generate_with_gemini) ] if gemini_key else []) + ([ ("claude_ai", _generate_with_claude) ] if claude_key else [])
+    errors = []
+    for provider_name, generate in providers:
+        try:
+            versions = _parse_lesson_json(generate(prompt))
+            estimates = {tier: {"words": len(re.findall(r"\b[\w'-]+\b", body)), "minutes": round(len(re.findall(r"\b[\w'-]+\b", body)) / 130, 1)} for tier, body in versions.items()}
+            return {"status": "success", "topic": topic, "versions": versions, "content_source": provider_name,
+                    "source_reference": req.source_reference if source_text else None, "reading_estimates": estimates}
+        except Exception:
+            errors.append(provider_name)
+    raise HTTPException(status_code=502, detail=f"Lesson generation failed for configured provider(s): {', '.join(errors)}. Check backend provider configuration and try again.")
+
+
+def _document_topics(text: str, filename: str, document_id: str):
+    """Split extracted text by headings; keep all lesson versions grounded in source text."""
+    sections = []
+    current_title, current_lines, current_page = "Overview", [], None
+    for line in text.splitlines():
+        stripped = line.strip()
+        clean = stripped.lstrip("#* ").strip().strip("*_")
+        is_heading = bool(re.match(r"^#{1,6}\s+", stripped) or re.match(r"^\*\*.+\*\*$", stripped))
+        is_heading = is_heading or (4 <= len(clean) <= 100 and len(clean.split()) <= 10 and clean.istitle() and not clean.endswith((".", ",", ";")))
+        if is_heading:
+            body = "\n".join(current_lines).strip()
+            if len(body) >= 80:
+                sections.append((current_title, body, current_page))
+            current_title, current_lines = clean, []
+            page_heading = re.fullmatch(r"Page (\d+)", current_title)
+            if page_heading:
+                current_page = int(page_heading.group(1))
+        else:
+            current_lines.append(line)
+    body = "\n".join(current_lines).strip()
+    if len(body) >= 80:
+        sections.append((current_title, body, current_page))
+    if not sections:
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if len(p.strip()) >= 120]
+        sections = [(f"Section {i + 1}", p, None) for i, p in enumerate(paragraphs[:8])]
+    result = []
+    for idx, (title, body, page_number) in enumerate(sections[:20]):
+        excerpt = body[:7000]
+        simplified = f"## {title} — Simplified\n\nKey points from {filename}:\n\n" + "\n\n".join(p[:450] for p in re.split(r"(?<=[.!?])\s+", excerpt)[:6])
+        standard = f"## {title} — Standard\n\n{excerpt}"
+        expert = f"## {title} — Expert / Challenging\n\nSource-grounded extension: compare the claims, assumptions, and evidence in this section.\n\n{excerpt}\n\n### Check your understanding\n- Which claim in this section is best supported by the source? Explain using its wording."
+        result.append({"id": f"{document_id}-{idx}", "name": title, "subtopics": [], "document_id": document_id,
+                       "source": {"document": filename, "section": title, "page": page_number},
+                       "versions": {"tier1": simplified, "tier3": standard, "tier5": expert}})
+    return result
+
+
+@app.post("/api/extract-topics")
+async def extract_topics(file: UploadFile = File(...)):
+    supplied_name = (file.filename or "upload").replace("\\", "/")
+    filename = re.sub(r"[\x00-\x1f]", "_", os.path.basename(supplied_name)).replace("..", "_")[:160]
+    suffix = os.path.splitext(filename)[1].lower()
+    if suffix not in (".pdf", ".txt"):
+        raise HTTPException(status_code=415, detail="Upload a PDF or TXT file.")
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File exceeds the 10 MB upload limit.")
+    if suffix == ".txt":
+        text = raw.decode("utf-8-sig", errors="replace")
+    else:
+        if not raw.startswith(b"%PDF-"):
+            raise HTTPException(status_code=400, detail="This file is not a valid PDF.")
+        try:
+            from pypdf import PdfReader
+            from io import BytesIO
+            reader = PdfReader(BytesIO(raw), strict=True)
+            if reader.is_encrypted:
+                raise HTTPException(status_code=400, detail="Password-protected PDFs are not supported.")
+            text = "\n\n".join(f"## Page {page_number}\n{page.extract_text() or ''}" for page_number, page in enumerate(reader.pages, start=1))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not read this PDF: {exc}")
+    if len(text.strip()) < 80:
+        detail = "No selectable text found; scanned or text-free PDFs need OCR before they can be used." if suffix == ".pdf" else "The text file is empty or too short to extract topics."
+        raise HTTPException(status_code=422, detail=detail)
+    document_id = uuid.uuid4().hex
+    topics = _document_topics(text, filename, document_id)
+    if not topics:
+        raise HTTPException(status_code=422, detail="Could not identify useful sections in this document.")
+    return {"status": "success", "document_id": document_id, "filename": filename, "topics": topics}
+
+
+def rewrite_with_claude(text: str, state: int) -> Tuple[str, bool]:
     api_key = os.environ.get("CLAUDE_API_KEY", "")
     if not api_key:
-        # Graceful fallback: return original RAG text if no key is configured
-        print("⚠️  CLAUDE_API_KEY not set — returning raw RAG content (no rewrite)")
-        return text
+        print("[Claude] CLAUDE_API_KEY not set - using curated educational content (no LLM rewrite)")
+        return text, False
+
+    if anthropic is None:
+        return text, False
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Construct targeted prompts based on the detected cognitive state
     if state == 1:
         prompt = f"Rewrite the following educational text for a struggling student using simple bullet points to reduce cognitive load:\n\n{text}"
     elif state == 2:
         prompt = f"Rewrite the following educational text to add more advanced depth and challenge for a student who is bored:\n\n{text}"
     else:
-        return text
+        return text, False
 
     try:
-        # Request a real-time content rewrite using the lightweight Haiku model
         response = client.messages.create(
             model="claude-3-haiku-20240307",
             max_tokens=300,
@@ -109,11 +285,11 @@ def rewrite_with_claude(text: str, state: int):
         )
         first_content = response.content[0]
         if hasattr(first_content, 'text'):
-            return first_content.text  # type: ignore
-        return text
+            return first_content.text, True  # type: ignore
+        return text, False
     except Exception as e:
         print(f"⚠️ Claude API Error: {e}")
-        return text  # Fallback to original RAG text
+        return text, False
 
 
 @app.get("/")
@@ -125,38 +301,35 @@ def read_root():
 def get_adaptation(data: StudentData):
     """
     Main adaptation endpoint called by the React frontend.
-
-    Request body:
-        cognitive_state: int  — 0=Flow, 1=Overload, 2=Boredom
-        current_level:   int  — 1 to 5 (current difficulty level)
-
-    Response:
-        status:           "success"
-        action_taken:     human-readable description of what happened
-        new_level:        int — updated difficulty level
-        original_rag_text: raw text from ChromaDB
-        content:          final text (Claude-rewritten if key available, else raw)
     """
-    # Step 1: Get adapted content + new level from RAG engine
-    adapted_text, new_level = rag.adapt_content(data.current_level, data.cognitive_state)
+    adapted_text, new_level, new_tier, content_source = rag.adapt_content(
+        data.current_level,
+        data.cognitive_state,
+        topic=data.topic,
+        current_tier=data.current_tier,
+        target_tier=data.target_tier,
+        curated_content=data.curated_content
+    )
 
     action_log = "Maintained Pace (Flow State)"
     final_text = adapted_text
+    was_rewritten = False
 
-    # Step 2: Trigger Claude rewriting for overload or boredom states
     if data.cognitive_state == 1:
         action_log = "Simplified Content (Overload Detected)"
-        final_text = rewrite_with_claude(adapted_text, 1)
+        final_text, was_rewritten = rewrite_with_claude(adapted_text, 1)
     elif data.cognitive_state == 2:
         action_log = "Increased Depth (Boredom Detected)"
-        final_text = rewrite_with_claude(adapted_text, 2)
+        final_text, was_rewritten = rewrite_with_claude(adapted_text, 2)
 
     return {
         "status": "success",
         "action_taken": action_log,
         "new_level": new_level,
+        "new_tier": new_tier,
         "original_rag_text": adapted_text,
         "content": final_text,
+        "content_source": "claude_rewrite" if was_rewritten else content_source,
     }
 
 
@@ -175,37 +348,33 @@ def analyze_frame(req: FrameRequest):
         print(f"Error in analyze_frame: {e}")
         return {
             "status": "error",
-            "face_detected": False,
-            "cognitive_state": 0,
-            "state_label": "Analysis Error",
-            "reason": str(e),
-            "metrics": {}
+            "message": str(e),
+            "state": "Idle",
+            "reason": "Analysis failed",
+            "confidence": 0,
+            "model": "Fallback",
+            "probabilities": {"flow": 0.33, "overload": 0.33, "boredom": 0.33},
+            "metrics": {"brow_down": 0, "blink": 0, "squint": 0, "pitch_ratio": 0}
         }
 
 
-# ── User Profile & Learning History API Endpoints ──
+# ── User Profile & Learning History Database Endpoints ──
 
 @app.get("/api/users")
-def list_users(db: Session = Depends(get_db)):
-    """List all registered user profiles."""
+def list_all_users(db: Session = Depends(get_db)):
     users = db.query(User).all()
     return {"status": "success", "users": [u.to_dict() for u in users]}
 
 
 @app.post("/api/users")
-def create_user(req: UserCreate, db: Session = Depends(get_db)):
-    """Create a new student profile."""
-    # Check if email already taken
-    if req.email:
-        existing = db.query(User).filter(User.email == req.email).first()
-        if existing:
-            return {"status": "success", "user": existing.to_dict(), "message": "Existing profile loaded"}
-
+def create_new_user(user_data: UserCreate, db: Session = Depends(get_db)):
+    user_id = f"usr_{uuid.uuid4().hex[:8]}"
     new_user = User(
-        name=req.name,
-        email=req.email,
-        avatar=req.avatar or "🎓",
-        grade_level=req.grade_level or "B.Tech Computer Science"
+        id=user_id,
+        name=user_data.name,
+        email=user_data.email or f"{user_data.name.lower().replace(' ', '')}@cogflow.ai",
+        avatar=user_data.avatar or "🎓",
+        grade_level=user_data.grade_level or "B.Tech Computer Science"
     )
     db.add(new_user)
     db.commit()
@@ -215,53 +384,41 @@ def create_user(req: UserCreate, db: Session = Depends(get_db)):
 
 @app.get("/api/users/{user_id}")
 def get_user_profile(user_id: str, db: Session = Depends(get_db)):
-    """Retrieve user profile by ID."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User profile not found")
+        raise HTTPException(status_code=404, detail="User not found")
     return {"status": "success", "user": user.to_dict()}
 
 
 @app.put("/api/users/{user_id}")
-def update_user_profile(user_id: str, req: UserUpdate, db: Session = Depends(get_db)):
-    """Update profile details, baseline calibrations, or preferred difficulty."""
+def update_user_profile(user_id: str, updates: UserUpdate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User profile not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
-    if req.name is not None: user.name = req.name
-    if req.email is not None: user.email = req.email
-    if req.avatar is not None: user.avatar = req.avatar
-    if req.grade_level is not None: user.grade_level = req.grade_level
-    if req.baseline_brow is not None: user.baseline_brow = req.baseline_brow
-    if req.baseline_squint is not None: user.baseline_squint = req.baseline_squint
-    if req.preferred_tier is not None: user.preferred_tier = req.preferred_tier
+    if updates.name is not None: user.name = updates.name
+    if updates.email is not None: user.email = updates.email
+    if updates.avatar is not None: user.avatar = updates.avatar
+    if updates.grade_level is not None: user.grade_level = updates.grade_level
+    if updates.baseline_brow is not None: user.baseline_brow = updates.baseline_brow
+    if updates.baseline_squint is not None: user.baseline_squint = updates.baseline_squint
+    if updates.preferred_tier is not None: user.preferred_tier = updates.preferred_tier
 
-    user.last_active = datetime.utcnow()
     db.commit()
     db.refresh(user)
     return {"status": "success", "user": user.to_dict()}
 
 
-@app.post("/api/sessions")
+@app.post("/api/sessions/save")
 def record_learning_session(req: SessionSaveRequest, db: Session = Depends(get_db)):
-    """
-    Save a completed learning session and automatically update learned topic history & mastery.
-    """
-    # Verify user exists or fallback to default
     user = db.query(User).filter(User.id == req.user_id).first()
-    if not user:
-        user = db.query(User).filter(User.id == "usr_default").first()
-        req.user_id = user.id if user else "usr_default"
 
-    # Compute duration and breakdown
-    dur = max(1, req.duration_seconds)
-    flow_secs = req.time_in_flow_secs
-    overload_secs = req.time_in_overload_secs
-    boredom_secs = req.time_in_boredom_secs
+    dur = req.duration_seconds
+    flow_secs = req.time_in_flow_secs or 0
+    overload_secs = req.time_in_overload_secs or 0
+    boredom_secs = req.time_in_boredom_secs or 0
 
-    # If telemetry breakdown wasn't explicitly tracked, estimate from avg load
-    if flow_secs == 0 and overload_secs == 0 and boredom_secs == 0:
+    if flow_secs == 0 and overload_secs == 0 and boredom_secs == 0 and dur > 0:
         if req.avg_cognitive_load > 70:
             overload_secs = int(dur * 0.6)
             flow_secs = int(dur * 0.4)
@@ -289,7 +446,6 @@ def record_learning_session(req: SessionSaveRequest, db: Session = Depends(get_d
     )
     db.add(new_session)
 
-    # Update learned history / topic mastery for each topic studied
     tier_rank = {"tier1": 1, "tier3": 3, "tier5": 5}
     for topic in req.topics:
         existing_topic = db.query(TopicProgress).filter(
@@ -301,10 +457,8 @@ def record_learning_session(req: SessionSaveRequest, db: Session = Depends(get_d
         if existing_topic:
             existing_topic.times_reviewed += 1
             existing_topic.last_reviewed = datetime.utcnow()
-            # Update tier if current final tier is higher
             if tier_rank.get(req.final_tier, 3) > tier_rank.get(existing_topic.highest_tier_reached, 3):
                 existing_topic.highest_tier_reached = req.final_tier
-            # Increment mastery score (capped at 100)
             existing_topic.mastery_score = min(100.0, existing_topic.mastery_score + 10.0)
         else:
             new_topic = TopicProgress(
@@ -318,7 +472,6 @@ def record_learning_session(req: SessionSaveRequest, db: Session = Depends(get_d
             )
             db.add(new_topic)
 
-    # Update user's last active timestamp
     if user:
         user.last_active = datetime.utcnow()
 
@@ -334,7 +487,6 @@ def record_learning_session(req: SessionSaveRequest, db: Session = Depends(get_d
 
 @app.get("/api/users/{user_id}/history")
 def get_user_session_history(user_id: str, db: Session = Depends(get_db)):
-    """Retrieve all past learning sessions for a user, ordered from most recent to oldest."""
     sessions = db.query(LearningSession).filter(
         LearningSession.user_id == user_id
     ).order_by(LearningSession.created_at.desc()).all()
@@ -348,12 +500,10 @@ def get_user_session_history(user_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/users/{user_id}/progress")
 def get_user_topic_progress(user_id: str, db: Session = Depends(get_db)):
-    """Retrieve learned history and mastery metrics across all topics."""
     records = db.query(TopicProgress).filter(
         TopicProgress.user_id == user_id
     ).order_by(TopicProgress.last_reviewed.desc()).all()
 
-    # Group topics by subject
     subjects_map = {}
     for r in records:
         subj = r.subject
@@ -371,7 +521,6 @@ def get_user_topic_progress(user_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/users/{user_id}/analytics")
 def get_user_cognitive_analytics(user_id: str, db: Session = Depends(get_db)):
-    """Aggregate cognitive analytics for student profile dashboard."""
     sessions = db.query(LearningSession).filter(LearningSession.user_id == user_id).all()
     topics = db.query(TopicProgress).filter(TopicProgress.user_id == user_id).all()
 
