@@ -56,19 +56,23 @@ export default function WebcamMonitor({ onCognitiveLoadUpdate, onTriggerSuggesti
     }
   }, []);
 
-  // ── Health Check to Port 8000 on mount ──
+  // ── Lightweight Health Check to Port 8000 on mount ──
   useEffect(() => {
     let isMounted = true;
     const checkBackend = async () => {
       try {
-        const res = await fetch(`${API_BASE}/`, { method: 'GET' });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1000);
+        const res = await fetch(`${API_BASE}/`, { method: 'GET', signal: controller.signal });
+        clearTimeout(timeoutId);
         if (isMounted) setBackendConnected(res.ok);
       } catch {
         if (isMounted) setBackendConnected(false);
       }
     };
     checkBackend();
-    const pingTimer = setInterval(checkBackend, 4000);
+    // 15-second non-blocking interval to avoid browser network queue congestion
+    const pingTimer = setInterval(checkBackend, 15000);
     return () => {
       isMounted = false;
       clearInterval(pingTimer);
@@ -395,7 +399,7 @@ export default function WebcamMonitor({ onCognitiveLoadUpdate, onTriggerSuggesti
               position: 'relative',
               borderRadius: 12,
               overflow: 'hidden',
-              background: '#090d16',
+              background: 'var(--bg-secondary)',
               border: '1px solid var(--border)',
               aspectRatio: '4/3',
               minHeight: 180,
